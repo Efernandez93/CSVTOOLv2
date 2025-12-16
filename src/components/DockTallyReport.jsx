@@ -54,11 +54,11 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
         try {
             const element = printRef.current;
             const timestamp = new Date().toISOString().split('T')[0];
-            const filename = `Dock_Tally_Report_${timestamp}.pdf`;
+            const defaultFilename = `Dock_Tally_Report_${timestamp}.pdf`;
 
             const opt = {
                 margin: [10, 10, 10, 10],
-                filename: filename,
+                filename: defaultFilename,
                 image: { type: 'jpeg', quality: 0.98 },
                 html2canvas: {
                     scale: 2,
@@ -76,14 +76,55 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
                 }
             };
 
-            // Generate and save the PDF
-            await html2pdf().set(opt).from(element).save();
+            // Generate PDF as blob
+            const pdfBlob = await html2pdf().set(opt).from(element).outputPdf('blob');
+
+            // Try to use File System Access API for "Save As" dialog
+            if ('showSaveFilePicker' in window) {
+                try {
+                    const fileHandle = await window.showSaveFilePicker({
+                        suggestedName: defaultFilename,
+                        types: [{
+                            description: 'PDF Document',
+                            accept: { 'application/pdf': ['.pdf'] }
+                        }]
+                    });
+
+                    const writableStream = await fileHandle.createWritable();
+                    await writableStream.write(pdfBlob);
+                    await writableStream.close();
+
+                    alert('PDF saved successfully!');
+                } catch (saveError) {
+                    // User cancelled the save dialog
+                    if (saveError.name !== 'AbortError') {
+                        console.error('Save error:', saveError);
+                        // Fallback to regular download
+                        downloadBlobFallback(pdfBlob, defaultFilename);
+                    }
+                }
+            } else {
+                // Fallback for browsers that don't support showSaveFilePicker
+                downloadBlobFallback(pdfBlob, defaultFilename);
+            }
         } catch (err) {
             console.error('Error generating PDF:', err);
             alert('Error generating PDF. Please try again.');
         }
 
         setGenerating(false);
+    };
+
+    // Fallback download method for older browsers
+    const downloadBlobFallback = (blob, filename) => {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
     };
 
     const handlePrint = () => {
