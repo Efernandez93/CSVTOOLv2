@@ -1,39 +1,52 @@
 /**
  * Dock Tally Report Component - 
  * Generates printable Ocean Dock Tally Reports grouped by MBL
- * With PDF download functionality
+ * Uses the currently filtered/displayed data from Dashboard
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { X, Printer, Download, FileText } from 'lucide-react';
-import { getDataGroupedByMBL } from '../lib/localDatabase';
 import html2pdf from 'html2pdf.js';
 
-export default function DockTallyReport({ isOpen, onClose, uploadId }) {
-    const [loading, setLoading] = useState(true);
-    const [groupedData, setGroupedData] = useState({});
+export default function DockTallyReport({ isOpen, onClose, data = [], activeFilter }) {
     const [selectedMBLs, setSelectedMBLs] = useState([]);
     const [generating, setGenerating] = useState(false);
     const printRef = useRef(null);
 
+    // Group the passed data by MBL
+    const groupedData = useMemo(() => {
+        if (!data || data.length === 0) return {};
+
+        const grouped = {};
+        for (const row of data) {
+            const mbl = row.mbl || 'NO MBL';
+            if (!grouped[mbl]) {
+                grouped[mbl] = {
+                    mbl: mbl,
+                    containers: new Set(),
+                    items: [],
+                };
+            }
+            if (row.container) {
+                grouped[mbl].containers.add(row.container);
+            }
+            grouped[mbl].items.push(row);
+        }
+
+        // Convert Sets to arrays
+        for (const mbl in grouped) {
+            grouped[mbl].containers = Array.from(grouped[mbl].containers);
+        }
+
+        return grouped;
+    }, [data]);
+
+    // Select all MBLs when data changes
     useEffect(() => {
         if (isOpen) {
-            loadData();
+            setSelectedMBLs(Object.keys(groupedData));
         }
-    }, [isOpen, uploadId]);
-
-    const loadData = async () => {
-        setLoading(true);
-        try {
-            const data = await getDataGroupedByMBL(uploadId);
-            setGroupedData(data);
-            // Select all MBLs by default
-            setSelectedMBLs(Object.keys(data));
-        } catch (err) {
-            console.error('Error loading data:', err);
-        }
-        setLoading(false);
-    };
+    }, [isOpen, groupedData]);
 
     const toggleMBL = (mbl) => {
         setSelectedMBLs(prev =>
@@ -203,6 +216,18 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
                     <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <FileText size={20} />
                         Generate Dock Tally Report
+                        {activeFilter && activeFilter !== 'all' && (
+                            <span style={{
+                                fontSize: '0.75rem',
+                                background: 'var(--navy-dark)',
+                                color: 'white',
+                                padding: '2px 8px',
+                                borderRadius: '4px',
+                                marginLeft: '8px'
+                            }}>
+                                Filtered: {activeFilter.replace('_', ' ').toUpperCase()}
+                            </span>
+                        )}
                     </h3>
                     <button className="btn btn-ghost btn-icon" onClick={onClose}>
                         <X size={20} />
@@ -210,12 +235,7 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
                 </div>
 
                 <div className="modal-body" style={{ overflow: 'auto' }}>
-                    {loading ? (
-                        <div style={{ textAlign: 'center', padding: '40px' }}>
-                            <span className="loading-spinner" style={{ width: '40px', height: '40px' }}></span>
-                            <p style={{ marginTop: '16px' }}>Loading data...</p>
-                        </div>
-                    ) : mblList.length === 0 ? (
+                    {mblList.length === 0 ? (
                         <div className="empty-state">
                             <div className="empty-state-icon">📄</div>
                             <h3>No data available</h3>
@@ -449,7 +469,7 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
                     <button
                         className="btn btn-secondary"
                         onClick={handlePrint}
-                        disabled={loading || selectedMBLs.length === 0}
+                        disabled={selectedMBLs.length === 0}
                     >
                         <Printer size={18} />
                         Print
@@ -457,7 +477,7 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
                     <button
                         className="btn btn-primary"
                         onClick={handleDownloadPDF}
-                        disabled={loading || selectedMBLs.length === 0 || generating}
+                        disabled={selectedMBLs.length === 0 || generating}
                     >
                         {generating ? (
                             <>

@@ -342,7 +342,8 @@ export default function Dashboard({ onLogout }) {
             <DockTallyReport
                 isOpen={showDockReport}
                 onClose={() => setShowDockReport(false)}
-                uploadId={isMasterList ? null : selectedUpload}
+                data={filteredData}
+                activeFilter={activeFilter}
             />
 
             {/* Toast Notification */}

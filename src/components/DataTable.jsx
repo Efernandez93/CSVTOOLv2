@@ -192,6 +192,10 @@ export default function DataTable({ data, loading }) {
             <table className="data-table">
                 <thead>
                     <tr>
+                        {/* Row number column */}
+                        <th style={{ width: 50, minWidth: 50, textAlign: 'center' }}>
+                            #
+                        </th>
                         {DISPLAY_COLUMNS.map(col => (
                             <th
                                 key={col.key}
@@ -250,6 +254,15 @@ export default function DataTable({ data, loading }) {
                 <tbody>
                     {sortedData.map((row, idx) => (
                         <tr key={row.id || idx}>
+                            {/* Row number cell */}
+                            <td style={{
+                                width: 50,
+                                textAlign: 'center',
+                                fontWeight: '500',
+                                color: 'var(--text-muted)'
+                            }}>
+                                {idx + 1}
+                            </td>
                             {DISPLAY_COLUMNS.map(col => {
                                 const value = row[col.key];
                                 const hasDuplicate = isDuplicate(col.key, value);
