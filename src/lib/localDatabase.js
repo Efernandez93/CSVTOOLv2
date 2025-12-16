@@ -114,13 +114,15 @@ export async function updateMasterList(uploadId, rows) {
     let itemsAdded = 0;
     let itemsUpdated = 0;
 
-    // Store ALL rows in master list (no deduplication)
+    // Master List is a unique catalog by HB - no duplicates
     for (const row of rows) {
         const hb = normalizeHB(row['HB']);
+        if (!hb) continue; // Skip rows without HB
+
+        // Check if this HB already exists in master list
+        const existingIndex = masterList.findIndex(m => m.hb === hb);
 
         const itemData = {
-            id: generateId(),
-            upload_id: uploadId,
             container: row['CONTAINER'] || null,
             seal_number: row['SEAL #'] || null,
             carrier: row['CARRIER'] || null,
@@ -138,11 +140,23 @@ export async function updateMasterList(uploadId, rows) {
             volume: row['VOLUME'] || null,
             vbond: row['VBOND#'] || null,
             tdf: row['TDF'] || null,
-            created_at: new Date().toISOString(),
+            last_updated_upload_id: uploadId,
+            updated_at: new Date().toISOString(),
         };
 
-        masterList.push(itemData);
-        itemsAdded++;
+        if (existingIndex >= 0) {
+            // Update existing entry with latest data
+            const existing = masterList[existingIndex];
+            masterList[existingIndex] = { ...existing, ...itemData };
+            itemsUpdated++;
+        } else {
+            // Add new entry
+            itemData.id = generateId();
+            itemData.first_seen_upload_id = uploadId;
+            itemData.created_at = new Date().toISOString();
+            masterList.push(itemData);
+            itemsAdded++;
+        }
     }
 
     setStorage(STORAGE_KEYS.MASTER_LIST, masterList);

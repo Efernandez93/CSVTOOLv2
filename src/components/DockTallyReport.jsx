@@ -54,11 +54,11 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
         try {
             const element = printRef.current;
             const timestamp = new Date().toISOString().split('T')[0];
-            const defaultFilename = `Dock_Tally_Report_${timestamp}.pdf`;
+            const filename = `Dock_Tally_Report_${timestamp}.pdf`;
 
             const opt = {
                 margin: [10, 10, 10, 10],
-                filename: defaultFilename,
+                filename: filename,
                 image: { type: 'jpeg', quality: 0.98 },
                 html2canvas: {
                     scale: 2,
@@ -76,40 +76,9 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
                 }
             };
 
-            // Try to use File System Access API for "Save As" dialog
-            if ('showSaveFilePicker' in window) {
-                try {
-                    // First show the save dialog
-                    const fileHandle = await window.showSaveFilePicker({
-                        suggestedName: defaultFilename,
-                        types: [{
-                            description: 'PDF Document',
-                            accept: { 'application/pdf': ['.pdf'] }
-                        }]
-                    });
+            // Generate and save the PDF using html2pdf's built-in save method
+            await html2pdf().set(opt).from(element).save();
 
-                    // Generate PDF and get as blob
-                    const worker = html2pdf().set(opt).from(element);
-                    const pdfBlob = await worker.output('blob');
-
-                    // Write to the selected file
-                    const writableStream = await fileHandle.createWritable();
-                    await writableStream.write(pdfBlob);
-                    await writableStream.close();
-
-                    alert('PDF saved successfully!');
-                } catch (saveError) {
-                    // User cancelled the save dialog
-                    if (saveError.name !== 'AbortError') {
-                        console.error('Save error:', saveError);
-                        // Fallback to regular download
-                        await html2pdf().set(opt).from(element).save();
-                    }
-                }
-            } else {
-                // Fallback for browsers that don't support showSaveFilePicker
-                await html2pdf().set(opt).from(element).save();
-            }
         } catch (err) {
             console.error('Error generating PDF:', err);
             alert('Error generating PDF. Please try again.');

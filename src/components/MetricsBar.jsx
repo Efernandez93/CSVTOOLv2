@@ -15,6 +15,12 @@ export default function MetricsBar({
             value: metrics.totalRows ?? 0
         },
         {
+            key: 'unique_mbl',
+            label: 'Unique MBLs',
+            value: metrics.uniqueMbls ?? 0,
+            isInfo: true  // Just for display, no filtering
+        },
+        {
             key: 'with_frl',
             label: 'With FRL',
             value: metrics.withFrl ?? 0

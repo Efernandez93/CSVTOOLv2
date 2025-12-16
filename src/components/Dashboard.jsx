@@ -73,6 +73,12 @@ export default function Dashboard({ onLogout }) {
     const loadMasterListData = async () => {
         setLoading(true);
         try {
+            // Load all master list data first to calculate metrics
+            const allMasterData = await getMasterListData('all');
+
+            // Calculate unique MBLs
+            const uniqueMblSet = new Set(allMasterData.filter(r => r.mbl && r.mbl.trim() !== '').map(r => r.mbl));
+
             // Load metrics
             const masterMetrics = await getMasterListMetrics();
             const newItems = await getMasterListNewItems();
@@ -81,6 +87,7 @@ export default function Dashboard({ onLogout }) {
 
             setMetrics({
                 totalRows: masterMetrics.totalRows,
+                uniqueMbls: uniqueMblSet.size,
                 withFrl: masterMetrics.withFrl,
                 withoutFrl: masterMetrics.withoutFrl,
                 newItems: newItems.count,
@@ -116,8 +123,12 @@ export default function Dashboard({ onLogout }) {
     const loadUploadData = async (uploadId) => {
         setLoading(true);
         try {
-            // Load metrics
+            // Load all data first to calculate metrics
             const reportData = await getReportData(uploadId);
+
+            // Calculate unique MBLs
+            const uniqueMblSet = new Set(reportData.filter(r => r.mbl && r.mbl.trim() !== '').map(r => r.mbl));
+
             const withFrl = reportData.filter(r => r.frl && r.frl.trim() !== '').length;
 
             const newItemsCount = await detectNewItems(uploadId);
@@ -125,6 +136,7 @@ export default function Dashboard({ onLogout }) {
 
             setMetrics({
                 totalRows: reportData.length,
+                uniqueMbls: uniqueMblSet.size,
                 withFrl,
                 withoutFrl: reportData.length - withFrl,
                 newItems: newItemsCount,
