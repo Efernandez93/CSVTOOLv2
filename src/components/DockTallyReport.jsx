@@ -76,12 +76,10 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
                 }
             };
 
-            // Generate PDF as blob
-            const pdfBlob = await html2pdf().set(opt).from(element).outputPdf('blob');
-
             // Try to use File System Access API for "Save As" dialog
             if ('showSaveFilePicker' in window) {
                 try {
+                    // First show the save dialog
                     const fileHandle = await window.showSaveFilePicker({
                         suggestedName: defaultFilename,
                         types: [{
@@ -90,6 +88,11 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
                         }]
                     });
 
+                    // Generate PDF and get as blob
+                    const worker = html2pdf().set(opt).from(element);
+                    const pdfBlob = await worker.output('blob');
+
+                    // Write to the selected file
                     const writableStream = await fileHandle.createWritable();
                     await writableStream.write(pdfBlob);
                     await writableStream.close();
@@ -100,12 +103,12 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
                     if (saveError.name !== 'AbortError') {
                         console.error('Save error:', saveError);
                         // Fallback to regular download
-                        downloadBlobFallback(pdfBlob, defaultFilename);
+                        await html2pdf().set(opt).from(element).save();
                     }
                 }
             } else {
                 // Fallback for browsers that don't support showSaveFilePicker
-                downloadBlobFallback(pdfBlob, defaultFilename);
+                await html2pdf().set(opt).from(element).save();
             }
         } catch (err) {
             console.error('Error generating PDF:', err);
@@ -113,18 +116,6 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
         }
 
         setGenerating(false);
-    };
-
-    // Fallback download method for older browsers
-    const downloadBlobFallback = (blob, filename) => {
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
     };
 
     const handlePrint = () => {
