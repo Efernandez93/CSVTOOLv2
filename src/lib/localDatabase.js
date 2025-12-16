@@ -114,13 +114,13 @@ export async function updateMasterList(uploadId, rows) {
     let itemsAdded = 0;
     let itemsUpdated = 0;
 
+    // Store ALL rows in master list (no deduplication)
     for (const row of rows) {
         const hb = normalizeHB(row['HB']);
-        if (!hb) continue;
-
-        const existingIndex = masterList.findIndex(m => m.hb === hb);
 
         const itemData = {
+            id: generateId(),
+            upload_id: uploadId,
             container: row['CONTAINER'] || null,
             seal_number: row['SEAL #'] || null,
             carrier: row['CARRIER'] || null,
@@ -138,29 +138,11 @@ export async function updateMasterList(uploadId, rows) {
             volume: row['VOLUME'] || null,
             vbond: row['VBOND#'] || null,
             tdf: row['TDF'] || null,
-            last_updated_upload_id: uploadId,
-            updated_at: new Date().toISOString(),
+            created_at: new Date().toISOString(),
         };
 
-        if (existingIndex >= 0) {
-            const existing = masterList[existingIndex];
-            let updateReason = [];
-            if (hasValueChanged(existing.frl, row['FRL'])) updateReason.push('FRL');
-            if (hasValueChanged(existing.tdf, row['TDF'])) updateReason.push('TDF');
-            if (hasValueChanged(existing.vbond, row['VBOND#'])) updateReason.push('VBOND');
-
-            if (updateReason.length > 0) {
-                itemData.last_update_reason = updateReason.join(', ');
-                masterList[existingIndex] = { ...existing, ...itemData };
-                itemsUpdated++;
-            }
-        } else {
-            itemData.id = generateId();
-            itemData.first_seen_upload_id = uploadId;
-            itemData.created_at = new Date().toISOString();
-            masterList.push(itemData);
-            itemsAdded++;
-        }
+        masterList.push(itemData);
+        itemsAdded++;
     }
 
     setStorage(STORAGE_KEYS.MASTER_LIST, masterList);
@@ -364,15 +346,23 @@ export async function getDataGroupedByMBL(uploadId = null) {
 
 function normalizeHB(value) {
     if (value === null || value === undefined || value === '') return '';
-    try {
-        const num = parseFloat(value);
-        if (!isNaN(num)) {
-            return String(Math.floor(num));
+
+    const strValue = String(value).trim();
+
+    // Check if it's scientific notation (e.g., 6.17E+08 or 6.17e+08)
+    if (/^-?\d+\.?\d*[eE][+-]?\d+$/.test(strValue)) {
+        try {
+            const num = parseFloat(strValue);
+            if (!isNaN(num)) {
+                return String(Math.floor(num));
+            }
+        } catch {
+            // If conversion fails, return original
         }
-        return String(value).trim();
-    } catch {
-        return String(value).trim();
     }
+
+    // For everything else (including alphanumeric like "62R0537240"), keep as-is
+    return strValue;
 }
 
 function hasValueChanged(oldVal, newVal) {

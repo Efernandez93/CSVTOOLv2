@@ -1,16 +1,19 @@
 /**
  * Dock Tally Report Component - 
  * Generates printable Ocean Dock Tally Reports grouped by MBL
+ * With PDF download functionality
  */
 
 import { useState, useEffect, useRef } from 'react';
 import { X, Printer, Download, FileText } from 'lucide-react';
 import { getDataGroupedByMBL } from '../lib/localDatabase';
+import html2pdf from 'html2pdf.js';
 
 export default function DockTallyReport({ isOpen, onClose, uploadId }) {
     const [loading, setLoading] = useState(true);
     const [groupedData, setGroupedData] = useState({});
     const [selectedMBLs, setSelectedMBLs] = useState([]);
+    const [generating, setGenerating] = useState(false);
     const printRef = useRef(null);
 
     useEffect(() => {
@@ -42,6 +45,46 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
 
     const selectAll = () => setSelectedMBLs(Object.keys(groupedData));
     const selectNone = () => setSelectedMBLs([]);
+
+    const handleDownloadPDF = async () => {
+        if (!printRef.current || selectedMBLs.length === 0) return;
+
+        setGenerating(true);
+
+        try {
+            const element = printRef.current;
+            const timestamp = new Date().toISOString().split('T')[0];
+            const filename = `Dock_Tally_Report_${timestamp}.pdf`;
+
+            const opt = {
+                margin: [10, 10, 10, 10],
+                filename: filename,
+                image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: {
+                    scale: 2,
+                    useCORS: true,
+                    letterRendering: true
+                },
+                jsPDF: {
+                    unit: 'mm',
+                    format: 'letter',
+                    orientation: 'portrait'
+                },
+                pagebreak: {
+                    mode: ['avoid-all', 'css', 'legacy'],
+                    before: '.report-page'
+                }
+            };
+
+            // Generate and save the PDF
+            await html2pdf().set(opt).from(element).save();
+        } catch (err) {
+            console.error('Error generating PDF:', err);
+            alert('Error generating PDF. Please try again.');
+        }
+
+        setGenerating(false);
+    };
 
     const handlePrint = () => {
         const printContent = printRef.current;
@@ -207,8 +250,9 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
                                     maxHeight: '120px',
                                     overflowY: 'auto',
                                     padding: '12px',
-                                    background: 'var(--bg-glass)',
-                                    borderRadius: 'var(--radius-md)'
+                                    background: 'var(--bg-tertiary)',
+                                    borderRadius: 'var(--radius-md)',
+                                    border: '1px solid var(--border-color)'
                                 }}>
                                     {mblList.map(mbl => (
                                         <label
@@ -218,10 +262,13 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
                                                 alignItems: 'center',
                                                 gap: '6px',
                                                 padding: '6px 12px',
-                                                background: selectedMBLs.includes(mbl) ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                                                background: selectedMBLs.includes(mbl) ? 'var(--navy-dark)' : 'white',
+                                                color: selectedMBLs.includes(mbl) ? 'white' : 'var(--text-primary)',
                                                 borderRadius: 'var(--radius-sm)',
                                                 cursor: 'pointer',
-                                                fontSize: '0.875rem'
+                                                fontSize: '0.875rem',
+                                                border: '1px solid var(--border-color)',
+                                                transition: 'all 0.2s ease'
                                             }}
                                         >
                                             <input
@@ -260,7 +307,9 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
                                                 padding: '20px',
                                                 color: 'black',
                                                 fontFamily: 'Arial, sans-serif',
-                                                fontSize: '12px'
+                                                fontSize: '12px',
+                                                backgroundColor: 'white',
+                                                pageBreakAfter: 'always'
                                             }}>
                                                 {/* Header */}
                                                 <div style={{ border: '2px solid black' }}>
@@ -269,7 +318,8 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
                                                         fontWeight: 'bold',
                                                         fontSize: '14px',
                                                         padding: '8px',
-                                                        borderBottom: '2px solid black'
+                                                        borderBottom: '2px solid black',
+                                                        backgroundColor: '#f0f0f0'
                                                     }}>
                                                         Ocean Dock Tally Report
                                                     </div>
@@ -279,7 +329,8 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
                                                         <div style={{
                                                             width: '200px',
                                                             borderRight: '2px solid black',
-                                                            padding: '8px'
+                                                            padding: '8px',
+                                                            backgroundColor: 'white'
                                                         }}>
                                                             <p style={{ margin: '4px 0', fontWeight: 'bold' }}>
                                                                 MB: {mbl}
@@ -293,7 +344,7 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
                                                         </div>
 
                                                         {/* Right Panel - Table */}
-                                                        <div style={{ flex: 1 }}>
+                                                        <div style={{ flex: 1, backgroundColor: 'white' }}>
                                                             <div style={{
                                                                 textAlign: 'center',
                                                                 fontWeight: 'bold',
@@ -320,7 +371,7 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
 
                                                             {/* Data Rows */}
                                                             {group.items.map((item, idx) => (
-                                                                <div key={idx} style={{ display: 'flex', minHeight: '60px' }}>
+                                                                <div key={idx} style={{ display: 'flex', minHeight: '50px', backgroundColor: 'white' }}>
                                                                     {/* Mfst Qty */}
                                                                     <div style={{
                                                                         width: '70px',
@@ -352,7 +403,7 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
                                                     </div>
 
                                                     {/* HB/Destination List (left side continuation) */}
-                                                    <div style={{ borderTop: '1px solid black', padding: '8px' }}>
+                                                    <div style={{ borderTop: '1px solid black', padding: '8px', backgroundColor: 'white' }}>
                                                         <table style={{
                                                             width: '100%',
                                                             borderCollapse: 'collapse',
@@ -395,12 +446,29 @@ export default function DockTallyReport({ isOpen, onClose, uploadId }) {
                         Close
                     </button>
                     <button
-                        className="btn btn-primary"
+                        className="btn btn-secondary"
                         onClick={handlePrint}
                         disabled={loading || selectedMBLs.length === 0}
                     >
                         <Printer size={18} />
-                        Print Report
+                        Print
+                    </button>
+                    <button
+                        className="btn btn-primary"
+                        onClick={handleDownloadPDF}
+                        disabled={loading || selectedMBLs.length === 0 || generating}
+                    >
+                        {generating ? (
+                            <>
+                                <span className="loading-spinner" style={{ width: '16px', height: '16px' }}></span>
+                                Generating...
+                            </>
+                        ) : (
+                            <>
+                                <Download size={18} />
+                                Download PDF
+                            </>
+                        )}
                     </button>
                 </div>
             </div>

@@ -81,16 +81,23 @@ export function cleanData(data) {
 
             return cleaned;
         })
-        // Remove rows where CONTAINER or HB is empty
+        // Only remove rows that are completely empty (no data in any important field)
         .filter(row => {
             const container = row['CONTAINER'];
             const hb = row['HB'];
-            return container && container !== '' && container.toLowerCase() !== 'nan';
+            const mbl = row['MBL'];
+            // Keep row if it has a container OR an HB OR an MBL
+            const hasContainer = container && container !== '' && container.toLowerCase() !== 'nan';
+            const hasHB = hb && hb !== '' && hb.toLowerCase() !== 'nan';
+            const hasMBL = mbl && mbl !== '' && mbl.toLowerCase() !== 'nan';
+            return hasContainer || hasHB || hasMBL;
         });
 }
 
 /**
- * Normalize HB value (handle scientific notation like 6.17E+08)
+ * Normalize HB value
+ * Only converts scientific notation (e.g., 6.17E+08) to regular numbers
+ * Preserves alphanumeric values like "62R0537240" as-is
  * @param {any} value - HB value
  * @returns {string} Normalized HB value
  */
@@ -99,17 +106,22 @@ function normalizeHB(value) {
         return '';
     }
 
-    try {
-        // Convert to float first (handles scientific notation)
-        const num = parseFloat(value);
-        if (!isNaN(num)) {
-            // Convert to integer then string (removes decimal places)
-            return String(Math.floor(num));
+    const strValue = String(value).trim();
+
+    // Check if it's scientific notation (e.g., 6.17E+08 or 6.17e+08)
+    if (/^-?\d+\.?\d*[eE][+-]?\d+$/.test(strValue)) {
+        try {
+            const num = parseFloat(strValue);
+            if (!isNaN(num)) {
+                return String(Math.floor(num));
+            }
+        } catch {
+            // If conversion fails, return original
         }
-        return String(value).trim();
-    } catch {
-        return String(value).trim();
     }
+
+    // For everything else (including alphanumeric like "62R0537240"), keep as-is
+    return strValue;
 }
 
 /**
