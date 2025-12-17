@@ -140,6 +140,7 @@ export async function saveReportData(uploadId, data, mode = 'ocean') {
             }
         });
 
+        // Batch insert in chunks if needed, but for now single batch
         const { error } = await supabase
             .from(tableName)
             .insert(records);
@@ -148,7 +149,7 @@ export async function saveReportData(uploadId, data, mode = 'ocean') {
             console.error(`Supabase saveReportData error (${mode}):`, error);
             throw error;
         }
-        return;
+        return records.length;
     }
 
     // Fallback to localStorage
@@ -264,10 +265,10 @@ export async function saveMasterList(data, mode = 'ocean') {
                 filename: 'MASTER_LIST_SNAPSHOT',
                 row_count: 0
             });
-            
+
             if (uploadError) {
-                 console.error('Supabase create master upload error:', uploadError);
-                 // We continue, but it might fail the next step if FK is strict
+                console.error('Supabase create master upload error:', uploadError);
+                // We continue, but it might fail the next step if FK is strict
             }
         }
 
@@ -294,7 +295,7 @@ export async function saveMasterList(data, mode = 'ocean') {
             console.error(`Supabase saveMasterList error (${mode}):`, error);
             throw error;
         }
-        
+
         // Return metrics (mocked as all new for now, since we replace the list)
         return { itemsAdded: records.length, itemsUpdated: 0 };
     }
