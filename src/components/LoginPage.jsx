@@ -31,9 +31,9 @@ export default function LoginPage({ onLogin }) {
                 <div className="login-card">
                     <div className="login-logo">
                         <div style={{ fontSize: '48px', marginBottom: '12px' }}>📊</div>
-                        <h1>CSV Dock Tally</h1>
+                        <h1>Global Dock Tally</h1>
                         <p style={{ color: 'var(--text-secondary)', marginTop: '8px' }}>
-                            Ocean Carrier Report Dashboard
+                            Ocean & Air Cargo Dashboard
                         </p>
                     </div>
 

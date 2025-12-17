@@ -3,7 +3,7 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
-import { Download, FileText, X } from 'lucide-react';
+import { Download, FileText, X, Anchor, Plane } from 'lucide-react';
 import Sidebar from './Sidebar';
 import MetricsBar from './MetricsBar';
 import DataTable from './DataTable';
@@ -24,9 +24,19 @@ import {
     getRemovedItemsData,
     detectNewItems,
     detectRemovedItems,
+    // Air functions
+    getAllAirUploads,
+    deleteAirUpload,
+    getAirReportData,
+    getAirMasterListData,
+    getAirMasterListMetrics,
+    getAirMasterListNewItems,
 } from '../lib/localDatabase';
 
 export default function Dashboard({ onLogout }) {
+    // Mode: 'ocean' or 'air'
+    const [mode, setMode] = useState('ocean');
+
     // State
     const [uploads, setUploads] = useState([]);
     const [selectedUpload, setSelectedUpload] = useState(null);
@@ -51,10 +61,15 @@ export default function Dashboard({ onLogout }) {
         newFrl: 0,
     });
 
-    // Load uploads on mount
+    // Load uploads on mount and when mode changes
     useEffect(() => {
         loadUploads();
-    }, []);
+        // Reset selection when mode changes
+        setSelectedUpload(null);
+        setIsMasterList(true);
+        setActiveFilter('all');
+        setSearchText('');
+    }, [mode]);
 
     // Load data when selection changes
     useEffect(() => {
@@ -63,56 +78,81 @@ export default function Dashboard({ onLogout }) {
         } else if (selectedUpload) {
             loadUploadData(selectedUpload);
         }
-    }, [isMasterList, selectedUpload, activeFilter]);
+    }, [isMasterList, selectedUpload, activeFilter, mode]);
 
     const loadUploads = async () => {
-        const uploadList = await getAllUploads();
+        const uploadList = mode === 'air'
+            ? await getAllAirUploads()
+            : await getAllUploads();
         setUploads(uploadList);
     };
 
     const loadMasterListData = async () => {
         setLoading(true);
         try {
-            // Load all master list data first to calculate metrics
-            const allMasterData = await getMasterListData('all');
+            if (mode === 'air') {
+                // Air mode
+                const allMasterData = await getAirMasterListData('all');
+                const uniqueMawbSet = new Set(allMasterData.filter(r => r.mawb && r.mawb.trim() !== '').map(r => r.mawb));
+                const masterMetrics = await getAirMasterListMetrics();
+                const newItems = await getAirMasterListNewItems();
 
-            // Calculate unique MBLs
-            const uniqueMblSet = new Set(allMasterData.filter(r => r.mbl && r.mbl.trim() !== '').map(r => r.mbl));
+                setMetrics({
+                    totalRows: masterMetrics.totalRows,
+                    uniqueMbls: uniqueMawbSet.size,
+                    withFrl: masterMetrics.withFrl,
+                    withoutFrl: masterMetrics.withoutFrl,
+                    newItems: newItems.count,
+                    updatedItems: 0,
+                    removedItems: 0,
+                    newFrl: 0,
+                });
 
-            // Load metrics
-            const masterMetrics = await getMasterListMetrics();
-            const newItems = await getMasterListNewItems();
-            const updatedItems = await getMasterListUpdatedItems();
-            const newFrl = await getMasterListNewFrl();
+                let loadedData = [];
+                switch (activeFilter) {
+                    case 'new_items':
+                        loadedData = newItems.data;
+                        break;
+                    default:
+                        loadedData = await getAirMasterListData(activeFilter);
+                }
+                setData(loadedData);
+            } else {
+                // Ocean mode (original logic)
+                const allMasterData = await getMasterListData('all');
+                const uniqueMblSet = new Set(allMasterData.filter(r => r.mbl && r.mbl.trim() !== '').map(r => r.mbl));
+                const masterMetrics = await getMasterListMetrics();
+                const newItems = await getMasterListNewItems();
+                const updatedItems = await getMasterListUpdatedItems();
+                const newFrl = await getMasterListNewFrl();
 
-            setMetrics({
-                totalRows: masterMetrics.totalRows,
-                uniqueMbls: uniqueMblSet.size,
-                withFrl: masterMetrics.withFrl,
-                withoutFrl: masterMetrics.withoutFrl,
-                newItems: newItems.count,
-                updatedItems: updatedItems.count,
-                removedItems: 0,
-                newFrl: newFrl.count,
-            });
+                setMetrics({
+                    totalRows: masterMetrics.totalRows,
+                    uniqueMbls: uniqueMblSet.size,
+                    withFrl: masterMetrics.withFrl,
+                    withoutFrl: masterMetrics.withoutFrl,
+                    newItems: newItems.count,
+                    updatedItems: updatedItems.count,
+                    removedItems: 0,
+                    newFrl: newFrl.count,
+                });
 
-            // Load data based on filter
-            let loadedData = [];
-            switch (activeFilter) {
-                case 'new_items':
-                    loadedData = newItems.data;
-                    break;
-                case 'updated_items':
-                    loadedData = updatedItems.data;
-                    break;
-                case 'new_frl':
-                    loadedData = newFrl.data;
-                    break;
-                default:
-                    loadedData = await getMasterListData(activeFilter);
+                let loadedData = [];
+                switch (activeFilter) {
+                    case 'new_items':
+                        loadedData = newItems.data;
+                        break;
+                    case 'updated_items':
+                        loadedData = updatedItems.data;
+                        break;
+                    case 'new_frl':
+                        loadedData = newFrl.data;
+                        break;
+                    default:
+                        loadedData = await getMasterListData(activeFilter);
+                }
+                setData(loadedData);
             }
-
-            setData(loadedData);
         } catch (err) {
             console.error('Error loading master list:', err);
             showToast('Error loading data', 'error');
@@ -123,42 +163,57 @@ export default function Dashboard({ onLogout }) {
     const loadUploadData = async (uploadId) => {
         setLoading(true);
         try {
-            // Load all data first to calculate metrics
-            const reportData = await getReportData(uploadId);
+            if (mode === 'air') {
+                // Air mode
+                const reportData = await getAirReportData(uploadId);
+                const uniqueMawbSet = new Set(reportData.filter(r => r.mawb && r.mawb.trim() !== '').map(r => r.mawb));
+                const withLog = reportData.filter(r => r.log && r.log.trim() !== '').length;
 
-            // Calculate unique MBLs
-            const uniqueMblSet = new Set(reportData.filter(r => r.mbl && r.mbl.trim() !== '').map(r => r.mbl));
+                setMetrics({
+                    totalRows: reportData.length,
+                    uniqueMbls: uniqueMawbSet.size,
+                    withFrl: withLog,
+                    withoutFrl: reportData.length - withLog,
+                    newItems: 0,
+                    removedItems: 0,
+                    updatedItems: 0,
+                    newFrl: 0,
+                });
 
-            const withFrl = reportData.filter(r => r.frl && r.frl.trim() !== '').length;
+                const loadedData = await getAirReportData(uploadId, activeFilter);
+                setData(loadedData);
+            } else {
+                // Ocean mode (original logic)
+                const reportData = await getReportData(uploadId);
+                const uniqueMblSet = new Set(reportData.filter(r => r.mbl && r.mbl.trim() !== '').map(r => r.mbl));
+                const withFrl = reportData.filter(r => r.frl && r.frl.trim() !== '').length;
+                const newItemsCount = await detectNewItems(uploadId);
+                const removedItemsCount = await detectRemovedItems(uploadId);
 
-            const newItemsCount = await detectNewItems(uploadId);
-            const removedItemsCount = await detectRemovedItems(uploadId);
+                setMetrics({
+                    totalRows: reportData.length,
+                    uniqueMbls: uniqueMblSet.size,
+                    withFrl,
+                    withoutFrl: reportData.length - withFrl,
+                    newItems: newItemsCount,
+                    removedItems: removedItemsCount,
+                    updatedItems: 0,
+                    newFrl: 0,
+                });
 
-            setMetrics({
-                totalRows: reportData.length,
-                uniqueMbls: uniqueMblSet.size,
-                withFrl,
-                withoutFrl: reportData.length - withFrl,
-                newItems: newItemsCount,
-                removedItems: removedItemsCount,
-                updatedItems: 0,
-                newFrl: 0,
-            });
-
-            // Load data based on filter
-            let loadedData = [];
-            switch (activeFilter) {
-                case 'new_items':
-                    loadedData = await getNewItemsData(uploadId);
-                    break;
-                case 'updated_items':
-                    loadedData = await getRemovedItemsData(uploadId);
-                    break;
-                default:
-                    loadedData = await getReportData(uploadId, activeFilter);
+                let loadedData = [];
+                switch (activeFilter) {
+                    case 'new_items':
+                        loadedData = await getNewItemsData(uploadId);
+                        break;
+                    case 'updated_items':
+                        loadedData = await getRemovedItemsData(uploadId);
+                        break;
+                    default:
+                        loadedData = await getReportData(uploadId, activeFilter);
+                }
+                setData(loadedData);
             }
-
-            setData(loadedData);
         } catch (err) {
             console.error('Error loading upload data:', err);
             showToast('Error loading data', 'error');
@@ -199,7 +254,9 @@ export default function Dashboard({ onLogout }) {
     };
 
     const handleDeleteUpload = async (uploadId) => {
-        const success = await deleteUpload(uploadId);
+        const success = mode === 'air'
+            ? await deleteAirUpload(uploadId)
+            : await deleteUpload(uploadId);
         if (success) {
             await loadUploads();
             if (selectedUpload === uploadId) {
@@ -268,6 +325,55 @@ export default function Dashboard({ onLogout }) {
             />
 
             <main className="main-content">
+                {/* Ocean/Air Mode Tabs */}
+                <div style={{
+                    display: 'flex',
+                    gap: '0',
+                    marginBottom: '16px',
+                    borderBottom: '2px solid var(--border-color)'
+                }}>
+                    <button
+                        onClick={() => setMode('ocean')}
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            padding: '12px 24px',
+                            border: 'none',
+                            borderBottom: mode === 'ocean' ? '3px solid var(--info)' : '3px solid transparent',
+                            background: mode === 'ocean' ? 'var(--info-bg)' : 'transparent',
+                            color: mode === 'ocean' ? 'var(--info)' : 'var(--text-secondary)',
+                            fontWeight: mode === 'ocean' ? '600' : '400',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s ease',
+                            fontSize: '0.95rem'
+                        }}
+                    >
+                        <Anchor size={20} />
+                        Ocean
+                    </button>
+                    <button
+                        onClick={() => setMode('air')}
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            padding: '12px 24px',
+                            border: 'none',
+                            borderBottom: mode === 'air' ? '3px solid var(--info)' : '3px solid transparent',
+                            background: mode === 'air' ? 'var(--info-bg)' : 'transparent',
+                            color: mode === 'air' ? 'var(--info)' : 'var(--text-secondary)',
+                            fontWeight: mode === 'air' ? '600' : '400',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s ease',
+                            fontSize: '0.95rem'
+                        }}
+                    >
+                        <Plane size={20} />
+                        Air
+                    </button>
+                </div>
+
                 <header className="content-header">
                     <div>
                         <h1 style={{ fontSize: '1.25rem', marginBottom: '4px' }}>
@@ -310,6 +416,7 @@ export default function Dashboard({ onLogout }) {
                         activeFilter={activeFilter}
                         onFilterChange={handleFilterChange}
                         isMasterList={isMasterList}
+                        mode={mode}
                     />
 
                     <SearchBar
@@ -318,6 +425,7 @@ export default function Dashboard({ onLogout }) {
                         onSearchChange={setSearchText}
                         onFieldChange={setSearchField}
                         onClear={() => setSearchText('')}
+                        mode={mode}
                     />
 
                     <div style={{
@@ -328,7 +436,7 @@ export default function Dashboard({ onLogout }) {
                         Showing {filteredData.length} of {data.length} rows
                     </div>
 
-                    <DataTable data={filteredData} loading={loading} />
+                    <DataTable data={filteredData} loading={loading} mode={mode} />
                 </div>
             </main>
 
@@ -337,6 +445,7 @@ export default function Dashboard({ onLogout }) {
                 isOpen={showUploadModal}
                 onClose={() => setShowUploadModal(false)}
                 onSuccess={handleUploadSuccess}
+                mode={mode}
             />
 
             <DockTallyReport
@@ -344,6 +453,7 @@ export default function Dashboard({ onLogout }) {
                 onClose={() => setShowDockReport(false)}
                 data={filteredData}
                 activeFilter={activeFilter}
+                mode={mode}
             />
 
             {/* Toast Notification */}

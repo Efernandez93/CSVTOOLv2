@@ -61,7 +61,7 @@ export default function Sidebar({
                     gap: '8px',
                     fontSize: '1.125rem'
                 }}>
-                    📊 CSV Dock Tally
+                    📊 Global Dock Tally
                 </h2>
             </div>
 

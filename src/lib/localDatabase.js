@@ -7,6 +7,10 @@ const STORAGE_KEYS = {
     UPLOADS: 'csvdock_uploads',
     REPORT_DATA: 'csvdock_report_data',
     MASTER_LIST: 'csvdock_master_list',
+    // Air cargo storage
+    AIR_UPLOADS: 'csvdock_air_uploads',
+    AIR_REPORT_DATA: 'csvdock_air_report_data',
+    AIR_MASTER_LIST: 'csvdock_air_master_list',
 };
 
 // Helper to generate unique IDs
@@ -394,4 +398,201 @@ export function clearAllData() {
     localStorage.removeItem(STORAGE_KEYS.UPLOADS);
     localStorage.removeItem(STORAGE_KEYS.REPORT_DATA);
     localStorage.removeItem(STORAGE_KEYS.MASTER_LIST);
+    localStorage.removeItem(STORAGE_KEYS.AIR_UPLOADS);
+    localStorage.removeItem(STORAGE_KEYS.AIR_REPORT_DATA);
+    localStorage.removeItem(STORAGE_KEYS.AIR_MASTER_LIST);
+}
+
+/**
+ * ===================================
+ * AIR CARGO OPERATIONS
+ * ===================================
+ */
+
+/**
+ * AIR UPLOADS
+ */
+export async function saveAirUpload(filename, rowCount) {
+    const uploads = getStorage(STORAGE_KEYS.AIR_UPLOADS);
+    const newUpload = {
+        id: generateId(),
+        filename,
+        row_count: rowCount,
+        upload_date: new Date().toISOString(),
+    };
+    uploads.unshift(newUpload);
+    setStorage(STORAGE_KEYS.AIR_UPLOADS, uploads);
+    return newUpload;
+}
+
+export async function getAllAirUploads() {
+    return getStorage(STORAGE_KEYS.AIR_UPLOADS);
+}
+
+export async function deleteAirUpload(uploadId) {
+    const uploads = getStorage(STORAGE_KEYS.AIR_UPLOADS).filter(u => u.id !== uploadId);
+    setStorage(STORAGE_KEYS.AIR_UPLOADS, uploads);
+
+    const reportData = getStorage(STORAGE_KEYS.AIR_REPORT_DATA).filter(r => r.upload_id !== uploadId);
+    setStorage(STORAGE_KEYS.AIR_REPORT_DATA, reportData);
+
+    return true;
+}
+
+/**
+ * AIR REPORT DATA
+ */
+export async function saveAirReportData(uploadId, rows) {
+    const reportData = getStorage(STORAGE_KEYS.AIR_REPORT_DATA);
+
+    const dataToInsert = rows.map(row => ({
+        id: generateId(),
+        upload_id: uploadId,
+        mawb: row['MAWB'] || null,
+        hawb: row['HAWB'] || null,
+        consignee: row['Consignee'] || null,
+        carrier: row['Carrier'] || null,
+        flight_number: row['FLIGHT NUMBER'] || null,
+        freight_location: row['FREIGHT LOCATION'] || null,
+        origin: row['ORIGIN'] || null,
+        destination: row['DESTINATION'] || null,
+        file_number: row['File Number'] || null,
+        qty: row['QTY'] || null,
+        shipment_type: row['Shipment Type'] || null,
+        slac: row['SLAC'] || null,
+        weight: row['WEIGHT'] || null,
+        eta: row['ETA'] || null,
+        eta_time: row['ETA TIME'] || null,
+        log: row['LOG'] || null,
+        flt_date: row['Flt Date'] || null,
+    }));
+
+    reportData.push(...dataToInsert);
+    setStorage(STORAGE_KEYS.AIR_REPORT_DATA, reportData);
+
+    return dataToInsert.length;
+}
+
+export async function getAirReportData(uploadId, filter = 'all') {
+    let data = getStorage(STORAGE_KEYS.AIR_REPORT_DATA).filter(r => r.upload_id === uploadId);
+
+    if (filter === 'with_frl') {
+        data = data.filter(r => r.log && r.log.trim() !== '');
+    } else if (filter === 'without_frl') {
+        data = data.filter(r => !r.log || r.log.trim() === '');
+    }
+
+    return data;
+}
+
+/**
+ * AIR MASTER LIST
+ */
+export async function getAirMasterListData(filter = 'all') {
+    let data = getStorage(STORAGE_KEYS.AIR_MASTER_LIST);
+
+    if (filter === 'with_frl') {
+        data = data.filter(r => r.log && r.log.trim() !== '');
+    } else if (filter === 'without_frl') {
+        data = data.filter(r => !r.log || r.log.trim() === '');
+    }
+
+    return data;
+}
+
+export async function getAirMasterListMetrics() {
+    const data = getStorage(STORAGE_KEYS.AIR_MASTER_LIST);
+    const withLog = data.filter(r => r.log && r.log.trim() !== '').length;
+    return {
+        totalRows: data.length,
+        withFrl: withLog,
+        withoutFrl: data.length - withLog,
+    };
+}
+
+export async function updateAirMasterList(uploadId, rows) {
+    const masterList = getStorage(STORAGE_KEYS.AIR_MASTER_LIST);
+    let itemsAdded = 0;
+    let itemsUpdated = 0;
+
+    for (const row of rows) {
+        const hawb = normalizeHB(row['HAWB']);
+        if (!hawb) continue;
+
+        const existingIndex = masterList.findIndex(m => m.hawb === hawb);
+
+        const itemData = {
+            mawb: row['MAWB'] || null,
+            hawb: hawb,
+            consignee: row['Consignee'] || null,
+            carrier: row['Carrier'] || null,
+            flight_number: row['FLIGHT NUMBER'] || null,
+            freight_location: row['FREIGHT LOCATION'] || null,
+            origin: row['ORIGIN'] || null,
+            destination: row['DESTINATION'] || null,
+            file_number: row['File Number'] || null,
+            qty: row['QTY'] || null,
+            shipment_type: row['Shipment Type'] || null,
+            slac: row['SLAC'] || null,
+            weight: row['WEIGHT'] || null,
+            eta: row['ETA'] || null,
+            eta_time: row['ETA TIME'] || null,
+            log: row['LOG'] || null,
+            flt_date: row['Flt Date'] || null,
+            last_updated_upload_id: uploadId,
+            updated_at: new Date().toISOString(),
+        };
+
+        if (existingIndex >= 0) {
+            const existing = masterList[existingIndex];
+            masterList[existingIndex] = { ...existing, ...itemData };
+            itemsUpdated++;
+        } else {
+            itemData.id = generateId();
+            itemData.first_seen_upload_id = uploadId;
+            itemData.created_at = new Date().toISOString();
+            masterList.push(itemData);
+            itemsAdded++;
+        }
+    }
+
+    setStorage(STORAGE_KEYS.AIR_MASTER_LIST, masterList);
+    return { itemsAdded, itemsUpdated };
+}
+
+export async function getAirMasterListNewItems() {
+    const masterList = getStorage(STORAGE_KEYS.AIR_MASTER_LIST);
+    const uploads = getStorage(STORAGE_KEYS.AIR_UPLOADS);
+
+    if (uploads.length === 0) return { count: 0, data: [] };
+
+    const latestUploadId = uploads[0].id;
+    const newItems = masterList.filter(item => item.first_seen_upload_id === latestUploadId);
+
+    return { count: newItems.length, data: newItems };
+}
+
+export function groupAirDataByMAWB(data) {
+    const grouped = {};
+
+    for (const row of data) {
+        const mawb = row.mawb || 'NO MAWB';
+        if (!grouped[mawb]) {
+            grouped[mawb] = {
+                mawb: mawb,
+                flights: new Set(),
+                items: [],
+            };
+        }
+        if (row.flight_number) {
+            grouped[mawb].flights.add(row.flight_number);
+        }
+        grouped[mawb].items.push(row);
+    }
+
+    for (const mawb in grouped) {
+        grouped[mawb].flights = Array.from(grouped[mawb].flights);
+    }
+
+    return grouped;
 }

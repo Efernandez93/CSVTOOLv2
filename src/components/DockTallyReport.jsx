@@ -1,6 +1,6 @@
 /**
  * Dock Tally Report Component - 
- * Generates printable Ocean Dock Tally Reports grouped by MBL
+ * Generates printable Ocean/Air Dock Tally Reports grouped by MBL/MAWB
  * Uses the currently filtered/displayed data from Dashboard
  */
 
@@ -8,41 +8,64 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { X, Printer, Download, FileText } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 
-export default function DockTallyReport({ isOpen, onClose, data = [], activeFilter }) {
+export default function DockTallyReport({ isOpen, onClose, data = [], activeFilter, mode = 'ocean' }) {
     const [selectedMBLs, setSelectedMBLs] = useState([]);
     const [generating, setGenerating] = useState(false);
     const [progress, setProgress] = useState({ current: 0, total: 0, message: '' });
     const printRef = useRef(null);
 
-    // Group the passed data by MBL
+    const isAir = mode === 'air';
+
+    // Group the passed data by MBL (Ocean) or MAWB (Air)
     const groupedData = useMemo(() => {
         if (!data || data.length === 0) return {};
 
         const grouped = {};
-        for (const row of data) {
-            const mbl = row.mbl || 'NO MBL';
-            if (!grouped[mbl]) {
-                grouped[mbl] = {
-                    mbl: mbl,
-                    containers: new Set(),
-                    items: [],
-                };
-            }
-            if (row.container) {
-                grouped[mbl].containers.add(row.container);
-            }
-            grouped[mbl].items.push(row);
-        }
 
-        // Convert Sets to arrays
-        for (const mbl in grouped) {
-            grouped[mbl].containers = Array.from(grouped[mbl].containers);
+        if (isAir) {
+            // Air: Group by MAWB
+            for (const row of data) {
+                const mawb = row.mawb || 'NO MAWB';
+                if (!grouped[mawb]) {
+                    grouped[mawb] = {
+                        mawb: mawb,
+                        flights: new Set(),
+                        items: [],
+                    };
+                }
+                if (row.flight_number) {
+                    grouped[mawb].flights.add(row.flight_number);
+                }
+                grouped[mawb].items.push(row);
+            }
+            for (const key in grouped) {
+                grouped[key].flights = Array.from(grouped[key].flights);
+            }
+        } else {
+            // Ocean: Group by MBL
+            for (const row of data) {
+                const mbl = row.mbl || 'NO MBL';
+                if (!grouped[mbl]) {
+                    grouped[mbl] = {
+                        mbl: mbl,
+                        containers: new Set(),
+                        items: [],
+                    };
+                }
+                if (row.container) {
+                    grouped[mbl].containers.add(row.container);
+                }
+                grouped[mbl].items.push(row);
+            }
+            for (const key in grouped) {
+                grouped[key].containers = Array.from(grouped[key].containers);
+            }
         }
 
         return grouped;
-    }, [data]);
+    }, [data, isAir]);
 
-    // Select all MBLs when data changes
+    // Select all items when data changes
     useEffect(() => {
         if (isOpen) {
             setSelectedMBLs(Object.keys(groupedData));
@@ -61,21 +84,33 @@ export default function DockTallyReport({ isOpen, onClose, data = [], activeFilt
     const selectNone = () => setSelectedMBLs([]);
 
     const handleDownloadPDF = async () => {
-        if (!printRef.current || selectedMBLs.length === 0) return;
+        console.log('handleDownloadPDF called');
+        console.log('printRef.current:', printRef.current);
+        console.log('selectedMBLs:', selectedMBLs);
+
+        if (!printRef.current || selectedMBLs.length === 0) {
+            console.log('Early return - printRef or selectedMBLs empty');
+            return;
+        }
 
         setGenerating(true);
+        console.log('Starting PDF generation...');
 
         try {
             const timestamp = new Date().toISOString().split('T')[0];
             const filename = `Dock_Tally_Report_${timestamp}.pdf`;
+            console.log('Filename:', filename);
 
             // For small number of MBLs, generate directly
             if (selectedMBLs.length <= 15) {
+                console.log('Using generateSinglePDF');
                 await generateSinglePDF(printRef.current, filename);
             } else {
                 // For large documents, generate in batches and merge
+                console.log('Using generateBatchPDF');
                 await generateBatchPDF(filename);
             }
+            console.log('PDF generation completed successfully');
 
         } catch (err) {
             console.error('Error generating PDF:', err);
@@ -85,6 +120,7 @@ export default function DockTallyReport({ isOpen, onClose, data = [], activeFilt
         setGenerating(false);
     };
 
+    // Generate a single PDF from element
     // Generate a single PDF from element
     const generateSinglePDF = async (element, filename) => {
         const opt = {
@@ -109,6 +145,7 @@ export default function DockTallyReport({ isOpen, onClose, data = [], activeFilt
             }
         };
 
+        // Use .save() which handles the download automatically and reliably
         await html2pdf().set(opt).from(element).save();
     };
 
@@ -225,23 +262,31 @@ export default function DockTallyReport({ isOpen, onClose, data = [], activeFilt
 
         setProgress({ current: batches.length, total: batches.length, message: 'Merging PDFs...' });
 
-        // Save merged PDF
+        // Standard download method
         const mergedPdfBytes = await mergedPdf.save();
         const blob = new Blob([mergedPdfBytes], { type: 'application/pdf' });
         const url = URL.createObjectURL(blob);
-
         const link = document.createElement('a');
         link.href = url;
         link.download = filename;
+        document.body.appendChild(link); // Required for some browsers
         link.click();
-
+        document.body.removeChild(link);
         URL.revokeObjectURL(url);
         setProgress({ current: 0, total: 0, message: '' });
         console.log('PDF generation complete!');
     };
 
-    // Render content for a batch of MBLs
-    const renderBatchContent = (mblBatch) => {
+    // Render content for a batch of items (MBLs or MAWBs)
+    const renderBatchContent = (itemBatch) => {
+        if (isAir) {
+            return renderAirBatchContent(itemBatch);
+        }
+        return renderOceanBatchContent(itemBatch);
+    };
+
+    // Ocean-specific rendering
+    const renderOceanBatchContent = (mblBatch) => {
         let html = '';
 
         mblBatch.forEach((mbl, mblIdx) => {
@@ -334,6 +379,142 @@ export default function DockTallyReport({ isOpen, onClose, data = [], activeFilt
                             <td style="border-right: 1px solid black; border-bottom: 2px solid black;"></td>
                             <td style="border-right: 1px solid black; border-bottom: 2px solid black;"></td>
                             <td style="border-bottom: 2px solid black;"></td>
+                        </tr>
+                    `;
+                });
+
+                html += `</tbody></table></div>`;
+            });
+        });
+
+        return html;
+    };
+
+    // Air-specific rendering with SLAC/QTY and 4 Arrival sections
+    const renderAirBatchContent = (mawbBatch) => {
+        let html = '';
+        const today = new Date();
+        const dateStr = `${today.getMonth() + 1}/${today.getDate()}/${String(today.getFullYear()).slice(-2)}`;
+        const timeStr = `${today.getHours()}:${String(today.getMinutes()).padStart(2, '0')}`;
+
+        mawbBatch.forEach((mawb, mawbIdx) => {
+            const group = groupedData[mawb];
+            if (!group) return;
+
+            const itemsPerPage = 6;
+            const pages = [];
+            for (let i = 0; i < group.items.length; i += itemsPerPage) {
+                pages.push(group.items.slice(i, i + itemsPerPage));
+            }
+
+            pages.forEach((pageItems, pageIdx) => {
+                const isPageBreak = (mawbIdx > 0 && pageIdx === 0) || pageIdx > 0;
+                const pageNum = pageIdx + 1;
+
+                html += `<div class="${isPageBreak ? 'page-break' : ''}" style="color: black; font-family: Arial, sans-serif; font-size: 10px; background-color: white; padding: 5px;">`;
+
+                // Header - Only on first page of MAWB
+                if (pageIdx === 0) {
+                    html += `
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; border-bottom: 1px solid black; padding-bottom: 3px;">
+                        <div><strong>Date:</strong> ${dateStr} ${timeStr}</div>
+                        <div style="font-weight: bold; font-size: 14px;">DOCK TALLY REPORT</div>
+                        <div><strong>Page:</strong> ${pageNum}</div>
+                    </div>
+                `;
+
+                    // MAWB Info
+                    html += `
+                    <div style="font-weight: bold; font-size: 12px; margin-bottom: 4px; border: 1px solid black; padding: 3px;">
+                        MAWB: ${mawb}
+                    </div>
+                `;
+                }
+
+                // Table with 4 arrival sections
+                html += `
+                    <table style="width: 100%; border-collapse: collapse; font-size: 8px; border: 1px solid black;">
+                        <thead>
+                            <tr>
+                                <th rowspan="2" style="width: 11%; padding: 2px; border: 1px solid black; font-weight: bold; vertical-align: middle;">HAWB</th>
+                                <th rowspan="2" style="width: 7%; padding: 2px; border: 1px solid black; font-weight: bold; vertical-align: middle;">Dest</th>
+                                <th rowspan="2" style="width: 5%; padding: 2px; border: 1px solid black; font-weight: bold; vertical-align: middle;">
+                                    <div>SLAC</div>
+                                    <div style="font-size: 7px; font-weight: normal;">Total</div>
+                                </th>
+                                <th colspan="5" style="padding: 2px; border: 1px solid black; font-weight: bold; text-align: center;">Arrival 1<div style="font-size: 6px; font-weight: normal;">Supv</div></th>
+                                <th colspan="5" style="padding: 2px; border: 1px solid black; font-weight: bold; text-align: center;">Arrival 2<div style="font-size: 6px; font-weight: normal;">Supv</div></th>
+                                <th colspan="5" style="padding: 2px; border: 1px solid black; font-weight: bold; text-align: center;">Arrival 3<div style="font-size: 6px; font-weight: normal;">Supv</div></th>
+                                <th colspan="5" style="padding: 2px; border: 1px solid black; font-weight: bold; text-align: center;">Arrival 4<div style="font-size: 6px; font-weight: normal;">Supv</div></th>
+                            </tr>
+                            <tr>
+                                <th style="width: 3%; padding: 1px; border: 1px solid black; font-size: 6px;">PCS</th>
+                                <th style="width: 3%; padding: 1px; border: 1px solid black; font-size: 6px;">LOC</th>
+                                <th style="width: 3%; padding: 1px; border: 1px solid black; font-size: 6px;">TIME</th>
+                                <th style="width: 3%; padding: 1px; border: 1px solid black; font-size: 6px;">CRW</th>
+                                <th style="width: 3%; padding: 1px; border: 1px solid black; font-size: 6px;">SUB</th>
+                                <th style="width: 3%; padding: 1px; border: 1px solid black; font-size: 6px;">PCS</th>
+                                <th style="width: 3%; padding: 1px; border: 1px solid black; font-size: 6px;">LOC</th>
+                                <th style="width: 3%; padding: 1px; border: 1px solid black; font-size: 6px;">TIME</th>
+                                <th style="width: 3%; padding: 1px; border: 1px solid black; font-size: 6px;">CRW</th>
+                                <th style="width: 3%; padding: 1px; border: 1px solid black; font-size: 6px;">SUB</th>
+                                <th style="width: 3%; padding: 1px; border: 1px solid black; font-size: 6px;">PCS</th>
+                                <th style="width: 3%; padding: 1px; border: 1px solid black; font-size: 6px;">LOC</th>
+                                <th style="width: 3%; padding: 1px; border: 1px solid black; font-size: 6px;">TIME</th>
+                                <th style="width: 3%; padding: 1px; border: 1px solid black; font-size: 6px;">CRW</th>
+                                <th style="width: 3%; padding: 1px; border: 1px solid black; font-size: 6px;">SUB</th>
+                                <th style="width: 3%; padding: 1px; border: 1px solid black; font-size: 6px;">PCS</th>
+                                <th style="width: 3%; padding: 1px; border: 1px solid black; font-size: 6px;">LOC</th>
+                                <th style="width: 3%; padding: 1px; border: 1px solid black; font-size: 6px;">TIME</th>
+                                <th style="width: 3%; padding: 1px; border: 1px solid black; font-size: 6px;">CRW</th>
+                                <th style="width: 3%; padding: 1px; border: 1px solid black; font-size: 6px;">SUB</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+
+                pageItems.forEach(item => {
+                    html += `
+                        <tr>
+                            <td style="padding: 3px; border: 1px solid black; font-weight: bold; vertical-align: top; font-size: 9px;">
+                                ${item.hawb || ''}
+                            </td>
+                            <td style="padding: 3px; border: 1px solid black; vertical-align: top; font-size: 7px;">
+                                ${item.destination || ''}
+                            </td>
+                            <td style="padding: 0; border: 1px solid black; text-align: center; vertical-align: top;">
+                                <div style="border-bottom: 1px solid black; padding: 2px; font-weight: bold;">${item.slac || ''}</div>
+                                <div style="padding: 2px; font-size: 7px;">${item.qty || ''}</div>
+                            </td>
+                            <td style="border: 1px solid black; height: 60px;"></td>
+                            <td style="border: 1px solid black;"></td>
+                            <td style="border: 1px solid black;"></td>
+                            <td style="border: 1px solid black;"></td>
+                            <td style="border: 1px solid black;"></td>
+                            <td style="border: 1px solid black;"></td>
+                            <td style="border: 1px solid black;"></td>
+                            <td style="border: 1px solid black;"></td>
+                            <td style="border: 1px solid black;"></td>
+                            <td style="border: 1px solid black;"></td>
+                            <td style="border: 1px solid black;"></td>
+                            <td style="border: 1px solid black;"></td>
+                            <td style="border: 1px solid black;"></td>
+                            <td style="border: 1px solid black;"></td>
+                            <td style="border: 1px solid black;"></td>
+                            <td style="border: 1px solid black;"></td>
+                            <td style="border: 1px solid black;"></td>
+                            <td style="border: 1px solid black;"></td>
+                            <td style="border: 1px solid black;"></td>
+                            <td style="border: 1px solid black;"></td>
+                        </tr>
+                        <tr>
+                            <td colspan="3" style="height: 45px; border: 1px solid black; padding: 2px; vertical-align: top; font-size: 7px;">
+                                <span style="color: #666;">Dock Notes:</span>
+                            </td>
+                            <td colspan="5" style="border: 1px solid black;"></td>
+                            <td colspan="5" style="border: 1px solid black;"></td>
+                            <td colspan="5" style="border: 1px solid black;"></td>
+                            <td colspan="5" style="border: 1px solid black;"></td>
                         </tr>
                     `;
                 });
@@ -449,6 +630,7 @@ export default function DockTallyReport({ isOpen, onClose, data = [], activeFilt
     if (!isOpen) return null;
 
     const mblList = Object.keys(groupedData);
+    const itemLabel = isAir ? 'MAWBs' : 'MBLs';
 
     return (
         <div className="modal-overlay" onClick={onClose}>
@@ -460,7 +642,7 @@ export default function DockTallyReport({ isOpen, onClose, data = [], activeFilt
                 <div className="modal-header">
                     <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <FileText size={20} />
-                        Generate Dock Tally Report
+                        Generate {isAir ? 'Air' : 'Ocean'} Dock Tally Report
                         {activeFilter && activeFilter !== 'all' && (
                             <span style={{
                                 fontSize: '0.75rem',
@@ -497,7 +679,7 @@ export default function DockTallyReport({ isOpen, onClose, data = [], activeFilt
                                     marginBottom: '12px'
                                 }}>
                                     <span style={{ fontWeight: '500' }}>
-                                        Select MBLs to include ({selectedMBLs.length} of {mblList.length})
+                                        Select {itemLabel} to include ({selectedMBLs.length} of {mblList.length})
                                     </span>
                                     <div style={{ display: 'flex', gap: '8px' }}>
                                         <button className="btn btn-sm btn-secondary" onClick={selectAll}>
@@ -563,158 +745,10 @@ export default function DockTallyReport({ isOpen, onClose, data = [], activeFilt
                                 borderRadius: 'var(--radius-md)',
                                 background: 'white'
                             }}>
-                                <div ref={printRef}>
-                                    {selectedMBLs.map((mbl, mblIdx) => {
-                                        const group = groupedData[mbl];
-                                        if (!group) return null;
-
-                                        // Split items into chunks of 6 for pagination
-                                        const itemsPerPage = 6;
-                                        const pages = [];
-                                        for (let i = 0; i < group.items.length; i += itemsPerPage) {
-                                            pages.push(group.items.slice(i, i + itemsPerPage));
-                                        }
-
-                                        return pages.map((pageItems, pageIdx) => (
-                                            <div
-                                                key={`${mbl}-page-${pageIdx}`}
-                                                className={(mblIdx > 0 && pageIdx === 0) || pageIdx > 0 ? 'page-break' : ''}
-                                                style={{
-                                                    color: 'black',
-                                                    fontFamily: 'Arial, sans-serif',
-                                                    fontSize: '11px',
-                                                    backgroundColor: 'white',
-                                                    paddingTop: pageIdx > 0 ? '10px' : '0',
-                                                    backgroundColor: 'white',
-                                                    paddingTop: pageIdx > 0 ? '10px' : '0'
-                                                }}
-                                            >
-                                                {/* Header - Only show on first page of each MBL */}
-                                                {pageIdx === 0 && (
-                                                    <>
-                                                        {/* MBL/Container/Arrival Header with Title Merged */}
-                                                        <table style={{ width: '100%', borderCollapse: 'collapse', border: '2px solid black', marginBottom: '-2px', position: 'relative', zIndex: 1 }}>
-                                                            <tbody>
-                                                                <tr>
-                                                                    <td colSpan="3" style={{
-                                                                        textAlign: 'center',
-                                                                        fontWeight: 'bold',
-                                                                        fontSize: '14px',
-                                                                        padding: '6px',
-                                                                        borderBottom: '2px solid black'
-                                                                    }}>
-                                                                        Ocean Dock Tally Report
-                                                                    </td>
-                                                                </tr>
-                                                                <tr>
-                                                                    <td style={{
-                                                                        width: '35%',
-                                                                        padding: '6px 10px',
-                                                                        borderRight: '1px solid black',
-                                                                        fontWeight: 'bold'
-                                                                    }}>
-                                                                        MBL: {mbl}
-                                                                    </td>
-                                                                    <td style={{
-                                                                        width: '35%',
-                                                                        padding: '6px 10px',
-                                                                        borderRight: '1px solid black',
-                                                                        fontWeight: 'bold'
-                                                                    }}>
-                                                                        Container: {group.containers.join(', ')}
-                                                                    </td>
-                                                                    <td style={{
-                                                                        width: '30%',
-                                                                        padding: '6px 10px',
-                                                                        fontWeight: 'bold'
-                                                                    }}>
-                                                                        Arrival:
-                                                                    </td>
-                                                                </tr>
-                                                            </tbody>
-                                                        </table>
-                                                    </>
-                                                )}
-
-                                                {/* Data Table */}
-                                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '10px', border: '2px solid black', borderTop: pageIdx === 0 ? 'none' : '2px solid black' }}>
-                                                    <thead>
-                                                        <tr>
-                                                            <th style={{ width: '15%', padding: '6px 4px', borderRight: '1px solid black', borderBottom: '1px solid black', fontWeight: 'bold' }}>HB</th>
-                                                            <th style={{ width: '12%', padding: '6px 4px', borderRight: '1px solid black', borderBottom: '1px solid black', fontWeight: 'bold' }}>Dest</th>
-                                                            <th style={{ width: '10%', padding: '6px 4px', borderRight: '1px solid black', borderBottom: '1px solid black', fontWeight: 'bold' }}>
-                                                                <div>Mfst Qty</div>
-                                                                <div style={{ fontSize: '8px', fontWeight: 'normal' }}>(Outer/PCS)</div>
-                                                            </th>
-                                                            <th style={{ width: '10%', padding: '6px 4px', borderRight: '1px solid black', borderBottom: '1px solid black', fontWeight: 'bold' }}>PCS</th>
-                                                            <th style={{ width: '10%', padding: '6px 4px', borderRight: '1px solid black', borderBottom: '1px solid black', fontWeight: 'bold' }}>LOC</th>
-                                                            <th style={{ width: '10%', padding: '6px 4px', borderRight: '1px solid black', borderBottom: '1px solid black', fontWeight: 'bold' }}>TIME</th>
-                                                            <th style={{ width: '10%', padding: '6px 4px', borderRight: '1px solid black', borderBottom: '1px solid black', fontWeight: 'bold' }}>DMG</th>
-                                                            <th style={{ width: '10%', padding: '6px 4px', borderBottom: '1px solid black', fontWeight: 'bold' }}>CRW</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody>
-                                                        {pageItems.map((item, idx) => (
-                                                            <React.Fragment key={idx}>
-                                                                {/* Data Row */}
-                                                                <tr>
-                                                                    <td style={{
-                                                                        padding: '6px',
-                                                                        borderRight: '1px solid black',
-                                                                        borderBottom: '1px solid black',
-                                                                        fontWeight: 'bold',
-                                                                        verticalAlign: 'middle',
-                                                                        height: '28px'
-                                                                    }}>
-                                                                        {item.hb || ''}
-                                                                    </td>
-                                                                    <td style={{
-                                                                        padding: '6px',
-                                                                        borderRight: '1px solid black',
-                                                                        borderBottom: '1px solid black',
-                                                                        verticalAlign: 'middle'
-                                                                    }}>
-                                                                        {item.dest || ''}
-                                                                    </td>
-                                                                    <td style={{
-                                                                        borderRight: '1px solid black',
-                                                                        borderBottom: '1px solid black',
-                                                                        textAlign: 'center',
-                                                                        verticalAlign: 'middle',
-                                                                        padding: 0
-                                                                    }}>
-                                                                        <div style={{ borderBottom: '1px solid black', padding: '4px', fontWeight: 'bold' }}>
-                                                                            {item.outer_quantity || ''}
-                                                                        </div>
-                                                                        <div style={{ padding: '4px' }}>
-                                                                            {item.pcs || ''}
-                                                                        </div>
-                                                                    </td>
-                                                                    <td style={{ borderRight: '1px solid black', borderBottom: '1px solid black' }}></td>
-                                                                    <td style={{ borderRight: '1px solid black', borderBottom: '1px solid black' }}></td>
-                                                                    <td style={{ borderRight: '1px solid black', borderBottom: '1px solid black' }}></td>
-                                                                    <td style={{ borderRight: '1px solid black', borderBottom: '1px solid black' }}></td>
-                                                                    <td style={{ borderBottom: '1px solid black' }}></td>
-                                                                </tr>
-                                                                {/* Notes Row - with same columns so lines connect */}
-                                                                <tr>
-                                                                    <td style={{ height: '50px', borderRight: '1px solid black', borderBottom: '2px solid black' }}></td>
-                                                                    <td style={{ borderRight: '1px solid black', borderBottom: '2px solid black' }}></td>
-                                                                    <td style={{ borderRight: '1px solid black', borderBottom: '2px solid black' }}></td>
-                                                                    <td style={{ borderRight: '1px solid black', borderBottom: '2px solid black' }}></td>
-                                                                    <td style={{ borderRight: '1px solid black', borderBottom: '2px solid black' }}></td>
-                                                                    <td style={{ borderRight: '1px solid black', borderBottom: '2px solid black' }}></td>
-                                                                    <td style={{ borderRight: '1px solid black', borderBottom: '2px solid black' }}></td>
-                                                                    <td style={{ borderBottom: '2px solid black' }}></td>
-                                                                </tr>
-                                                            </React.Fragment>
-                                                        ))}
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        ));
-                                    })}
-                                </div>
+                                <div
+                                    ref={printRef}
+                                    dangerouslySetInnerHTML={{ __html: renderBatchContent(selectedMBLs) }}
+                                />
                             </div>
                         </>
                     )}

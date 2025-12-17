@@ -4,10 +4,13 @@
 
 import { useState, useRef } from 'react';
 import { Upload, X, FileText, CheckCircle, AlertCircle } from 'lucide-react';
-import { parseCSV, validateColumns, cleanData } from '../lib/csvUtils';
-import { saveUpload, saveReportData, updateMasterList } from '../lib/localDatabase';
+import { parseCSV, validateColumns, cleanData, cleanAirData } from '../lib/csvUtils';
+import {
+    saveUpload, saveReportData, updateMasterList,
+    saveAirUpload, saveAirReportData, updateAirMasterList
+} from '../lib/localDatabase';
 
-export default function UploadModal({ isOpen, onClose, onSuccess }) {
+export default function UploadModal({ isOpen, onClose, onSuccess, mode = 'ocean' }) {
     const [file, setFile] = useState(null);
     const [dragActive, setDragActive] = useState(false);
     const [uploading, setUploading] = useState(false);
@@ -62,17 +65,19 @@ export default function UploadModal({ isOpen, onClose, onSuccess }) {
                 throw new Error(`CSV parsing error: ${results.errors[0].message}`);
             }
 
-            // Step 2: Validate columns
+            // Step 2: Validate columns (mode-aware)
             setProgress({ step: 'Validating columns...', detail: '' });
-            const validation = validateColumns(results.meta.fields);
+            const validation = validateColumns(results.meta.fields, mode);
 
             if (!validation.isValid) {
                 throw new Error(validation.message);
             }
 
-            // Step 3: Clean data
+            // Step 3: Clean data (mode-aware)
             setProgress({ step: 'Cleaning data...', detail: '' });
-            const cleanedData = cleanData(results.data);
+            const cleanedData = mode === 'air'
+                ? cleanAirData(results.data)
+                : cleanData(results.data);
 
             if (cleanedData.length === 0) {
                 throw new Error('No valid data rows found in CSV');
@@ -80,23 +85,29 @@ export default function UploadModal({ isOpen, onClose, onSuccess }) {
 
             setProgress({ step: 'Saving upload...', detail: `${cleanedData.length} rows` });
 
-            // Step 4: Save upload record
-            const upload = await saveUpload(file.name, cleanedData.length);
+            // Step 4: Save upload record (mode-aware)
+            const upload = mode === 'air'
+                ? await saveAirUpload(file.name, cleanedData.length)
+                : await saveUpload(file.name, cleanedData.length);
             if (!upload) {
                 throw new Error('Failed to save upload record');
             }
 
-            // Step 5: Save report data
+            // Step 5: Save report data (mode-aware)
             setProgress({ step: 'Saving report data...', detail: '' });
-            const rowsInserted = await saveReportData(upload.id, cleanedData);
+            const rowsInserted = mode === 'air'
+                ? await saveAirReportData(upload.id, cleanedData)
+                : await saveReportData(upload.id, cleanedData);
 
             if (!rowsInserted) {
                 throw new Error('Failed to save report data');
             }
 
-            // Step 6: Update master list
+            // Step 6: Update master list (mode-aware)
             setProgress({ step: 'Updating master list...', detail: '' });
-            const { itemsAdded, itemsUpdated } = await updateMasterList(upload.id, cleanedData);
+            const { itemsAdded, itemsUpdated } = mode === 'air'
+                ? await updateAirMasterList(upload.id, cleanedData)
+                : await updateMasterList(upload.id, cleanedData);
 
             setProgress({
                 step: 'Complete!',

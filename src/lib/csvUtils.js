@@ -10,6 +10,13 @@ export const REQUIRED_COLUMNS = [
     'DEST', 'VOLUME', 'VBOND#', 'TDF'
 ];
 
+export const AIR_REQUIRED_COLUMNS = [
+    'MAWB', 'HAWB', 'Consignee', 'Carrier', 'FLIGHT NUMBER',
+    'FREIGHT LOCATION', 'ORIGIN', 'DESTINATION', 'File Number',
+    'QTY', 'Shipment Type', 'SLAC', 'WEIGHT', 'ETA', 'ETA TIME',
+    'LOG', 'Flt Date'
+];
+
 /**
  * Parse CSV file
  * @param {File} file - The CSV file to parse
@@ -33,10 +40,12 @@ export function parseCSV(file) {
 /**
  * Validate CSV has all required columns
  * @param {Array} headers - Column headers from CSV
+ * @param {string} mode - 'ocean' or 'air'
  * @returns {{isValid: boolean, message: string, missingColumns: Array}}
  */
-export function validateColumns(headers) {
-    const missingColumns = REQUIRED_COLUMNS.filter(col => !headers.includes(col));
+export function validateColumns(headers, mode = 'ocean') {
+    const requiredCols = mode === 'air' ? AIR_REQUIRED_COLUMNS : REQUIRED_COLUMNS;
+    const missingColumns = requiredCols.filter(col => !headers.includes(col));
 
     if (missingColumns.length > 0) {
         return {
@@ -54,7 +63,7 @@ export function validateColumns(headers) {
 }
 
 /**
- * Clean and normalize CSV data
+ * Clean and normalize CSV data for Ocean
  * @param {Array} data - Raw CSV data rows
  * @returns {Array} Cleaned data rows
  */
@@ -189,3 +198,87 @@ export const DISPLAY_COLUMNS = [
     { key: 'vbond', label: 'VBOND#' },
     { key: 'tdf', label: 'TDF' },
 ];
+
+/**
+ * Air Column Mapping
+ */
+export const AIR_COLUMN_MAPPING = {
+    'MAWB': 'mawb',
+    'HAWB': 'hawb',
+    'Consignee': 'consignee',
+    'Carrier': 'carrier',
+    'FLIGHT NUMBER': 'flight_number',
+    'FREIGHT LOCATION': 'freight_location',
+    'ORIGIN': 'origin',
+    'DESTINATION': 'destination',
+    'File Number': 'file_number',
+    'QTY': 'qty',
+    'Shipment Type': 'shipment_type',
+    'SLAC': 'slac',
+    'WEIGHT': 'weight',
+    'ETA': 'eta',
+    'ETA TIME': 'eta_time',
+    'LOG': 'log',
+    'Flt Date': 'flt_date'
+};
+
+/**
+ * Display column names for Air table
+ */
+export const AIR_DISPLAY_COLUMNS = [
+    { key: 'mawb', label: 'MAWB' },
+    { key: 'hawb', label: 'HAWB' },
+    { key: 'consignee', label: 'CONSIGNEE' },
+    { key: 'carrier', label: 'CARRIER' },
+    { key: 'flight_number', label: 'FLIGHT #' },
+    { key: 'freight_location', label: 'LOCATION' },
+    { key: 'origin', label: 'ORIGIN' },
+    { key: 'destination', label: 'DEST' },
+    { key: 'file_number', label: 'FILE NO' },
+    { key: 'qty', label: 'QTY' },
+    { key: 'shipment_type', label: 'TYPE' },
+    { key: 'slac', label: 'SLAC' },
+    { key: 'weight', label: 'WEIGHT' },
+    { key: 'eta', label: 'ETA' },
+    { key: 'eta_time', label: 'ETA TIME' },
+    { key: 'log', label: 'LOG' },
+    { key: 'flt_date', label: 'FLT DATE' },
+];
+
+/**
+ * Clean and normalize Air CSV data
+ * @param {Array} data - Raw CSV data rows
+ * @returns {Array} Cleaned data rows
+ */
+export function cleanAirData(data) {
+    return data
+        .map(row => {
+            const cleaned = {};
+
+            for (const key of Object.keys(row)) {
+                let value = row[key];
+
+                // Trim whitespace from string values
+                if (typeof value === 'string') {
+                    value = value.trim();
+                }
+
+                // Normalize HAWB column (handle scientific notation)
+                if (key === 'HAWB') {
+                    value = normalizeHB(value);
+                }
+
+                cleaned[key] = value;
+            }
+
+            return cleaned;
+        })
+        // Keep row if it has a MAWB or HAWB
+        .filter(row => {
+            const mawb = row['MAWB'];
+            const hawb = row['HAWB'];
+            const hasMAWB = mawb && mawb !== '' && mawb.toLowerCase() !== 'nan';
+            const hasHAWB = hawb && hawb !== '' && hawb.toLowerCase() !== 'nan';
+            return hasMAWB || hasHAWB;
+        });
+}

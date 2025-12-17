@@ -6,8 +6,11 @@ export default function MetricsBar({
     metrics,
     activeFilter,
     onFilterChange,
-    isMasterList
+    isMasterList,
+    mode = 'ocean'
 }) {
+    const isAir = mode === 'air';
+
     const cards = [
         {
             key: 'all',
@@ -16,20 +19,23 @@ export default function MetricsBar({
         },
         {
             key: 'unique_mbl',
-            label: 'Unique MBLs',
+            label: isAir ? 'Unique MAWBs' : 'Unique MBLs',
             value: metrics.uniqueMbls ?? 0,
             isInfo: true  // Just for display, no filtering
         },
-        {
-            key: 'with_frl',
-            label: 'With FRL',
-            value: metrics.withFrl ?? 0
-        },
-        {
-            key: 'without_frl',
-            label: 'Without FRL',
-            value: metrics.withoutFrl ?? 0
-        },
+        // Only show FRL metrics for Ocean mode
+        ...(!isAir ? [
+            {
+                key: 'with_frl',
+                label: 'With FRL',
+                value: metrics.withFrl ?? 0
+            },
+            {
+                key: 'without_frl',
+                label: 'Without FRL',
+                value: metrics.withoutFrl ?? 0
+            },
+        ] : []),
         {
             key: 'new_items',
             label: isMasterList ? 'NEW Items' : 'NEW Items',
@@ -40,19 +46,23 @@ export default function MetricsBar({
             key: 'updated_items',
             label: isMasterList ? 'Updated' : 'Removed',
             value: isMasterList ? (metrics.updatedItems ?? 0) : (metrics.removedItems ?? 0),
-            enabled: true
+            enabled: true,
+            hidden: isAir // Hide for Air mode since we don't track this yet
         },
-        {
-            key: 'new_frl',
-            label: "Newly FRL'd",
-            value: metrics.newFrl ?? 0,
-            enabled: true
-        },
+        // Only show Newly FRL'd for Ocean mode
+        ...(!isAir ? [
+            {
+                key: 'new_frl',
+                label: "Newly FRL'd",
+                value: metrics.newFrl ?? 0,
+                enabled: true
+            },
+        ] : []),
     ];
 
     return (
         <div className="metrics-bar">
-            {cards.map(card => (
+            {cards.filter(card => !card.hidden).map(card => (
                 <div
                     key={card.key}
                     className={`metric-card ${activeFilter === card.key ? 'active' : ''}`}

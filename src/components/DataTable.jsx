@@ -6,11 +6,12 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
-import { DISPLAY_COLUMNS } from '../lib/csvUtils';
+import { DISPLAY_COLUMNS, AIR_DISPLAY_COLUMNS } from '../lib/csvUtils';
 
 const COLUMN_WIDTHS_KEY = 'csvdock_column_widths';
+const AIR_COLUMN_WIDTHS_KEY = 'csvdock_air_column_widths';
 
-// Default column widths
+// Default column widths for Ocean
 const DEFAULT_WIDTHS = {
     container: 130,
     seal_number: 100,
@@ -31,30 +32,68 @@ const DEFAULT_WIDTHS = {
     tdf: 100,
 };
 
-export default function DataTable({ data, loading }) {
+// Default column widths for Air
+const AIR_DEFAULT_WIDTHS = {
+    mawb: 130,
+    hawb: 120,
+    consignee: 150,
+    carrier: 100,
+    flight_number: 100,
+    freight_location: 120,
+    origin: 80,
+    destination: 80,
+    file_number: 80,
+    qty: 60,
+    shipment_type: 80,
+    slac: 60,
+    weight: 80,
+    eta: 100,
+    eta_time: 80,
+    log: 80,
+    flt_date: 100,
+};
+
+export default function DataTable({ data, loading, mode = 'ocean' }) {
+    const columns = mode === 'air' ? AIR_DISPLAY_COLUMNS : DISPLAY_COLUMNS;
+    const widthsKey = mode === 'air' ? AIR_COLUMN_WIDTHS_KEY : COLUMN_WIDTHS_KEY;
+    const defaultWidths = mode === 'air' ? AIR_DEFAULT_WIDTHS : DEFAULT_WIDTHS;
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
     const [columnWidths, setColumnWidths] = useState(() => {
         // Load saved widths from localStorage
         try {
-            const saved = localStorage.getItem(COLUMN_WIDTHS_KEY);
+            const saved = localStorage.getItem(widthsKey);
             if (saved) {
-                return { ...DEFAULT_WIDTHS, ...JSON.parse(saved) };
+                return { ...defaultWidths, ...JSON.parse(saved) };
             }
         } catch (e) {
             console.error('Error loading column widths:', e);
         }
-        return DEFAULT_WIDTHS;
+        return defaultWidths;
     });
     const [resizing, setResizing] = useState(null);
+
+    // Reset column widths when mode changes
+    useEffect(() => {
+        try {
+            const saved = localStorage.getItem(widthsKey);
+            if (saved) {
+                setColumnWidths({ ...defaultWidths, ...JSON.parse(saved) });
+            } else {
+                setColumnWidths(defaultWidths);
+            }
+        } catch (e) {
+            setColumnWidths(defaultWidths);
+        }
+    }, [mode]);
 
     // Save column widths to localStorage when they change
     useEffect(() => {
         try {
-            localStorage.setItem(COLUMN_WIDTHS_KEY, JSON.stringify(columnWidths));
+            localStorage.setItem(widthsKey, JSON.stringify(columnWidths));
         } catch (e) {
             console.error('Error saving column widths:', e);
         }
-    }, [columnWidths]);
+    }, [columnWidths, widthsKey]);
 
     // Handle mouse move during resize
     useEffect(() => {
@@ -82,29 +121,32 @@ export default function DataTable({ data, loading }) {
         };
     }, [resizing]);
 
-    // Calculate duplicates for HB and MBL columns
+    // Calculate duplicates for HB/MBL (Ocean) or HAWB/MAWB (Air) columns
     const duplicates = useMemo(() => {
-        if (!data || data.length === 0) return { hb: new Set(), mbl: new Set() };
+        if (!data || data.length === 0) return { primary: new Set(), secondary: new Set() };
 
-        const hbCounts = {};
-        const mblCounts = {};
+        const primaryKey = mode === 'air' ? 'hawb' : 'hb';
+        const secondaryKey = mode === 'air' ? 'mawb' : 'mbl';
+
+        const primaryCounts = {};
+        const secondaryCounts = {};
 
         data.forEach(row => {
-            const hb = row.hb;
-            const mbl = row.mbl;
-            if (hb && hb.trim() !== '') {
-                hbCounts[hb] = (hbCounts[hb] || 0) + 1;
+            const primaryVal = row[primaryKey];
+            const secondaryVal = row[secondaryKey];
+            if (primaryVal && primaryVal.trim() !== '') {
+                primaryCounts[primaryVal] = (primaryCounts[primaryVal] || 0) + 1;
             }
-            if (mbl && mbl.trim() !== '') {
-                mblCounts[mbl] = (mblCounts[mbl] || 0) + 1;
+            if (secondaryVal && secondaryVal.trim() !== '') {
+                secondaryCounts[secondaryVal] = (secondaryCounts[secondaryVal] || 0) + 1;
             }
         });
 
-        const duplicateHBs = new Set(Object.keys(hbCounts).filter(k => hbCounts[k] > 1));
-        const duplicateMBLs = new Set(Object.keys(mblCounts).filter(k => mblCounts[k] > 1));
+        const duplicatePrimary = new Set(Object.keys(primaryCounts).filter(k => primaryCounts[k] > 1));
+        const duplicateSecondary = new Set(Object.keys(secondaryCounts).filter(k => secondaryCounts[k] > 1));
 
-        return { hb: duplicateHBs, mbl: duplicateMBLs };
-    }, [data]);
+        return { primary: duplicatePrimary, secondary: duplicateSecondary };
+    }, [data, mode]);
 
     const sortedData = useMemo(() => {
         if (!data || !sortConfig.key) return data || [];
@@ -145,8 +187,10 @@ export default function DataTable({ data, loading }) {
 
     const isDuplicate = (colKey, value) => {
         if (!value || String(value).trim() === '') return false;
-        if (colKey === 'hb') return duplicates.hb.has(value);
-        if (colKey === 'mbl') return duplicates.mbl.has(value);
+        const primaryKey = mode === 'air' ? 'hawb' : 'hb';
+        const secondaryKey = mode === 'air' ? 'mawb' : 'mbl';
+        if (colKey === primaryKey) return duplicates.primary.has(value);
+        if (colKey === secondaryKey) return duplicates.secondary.has(value);
         return false;
     };
 
@@ -196,11 +240,11 @@ export default function DataTable({ data, loading }) {
                         <th style={{ width: 50, minWidth: 50, textAlign: 'center' }}>
                             #
                         </th>
-                        {DISPLAY_COLUMNS.map(col => (
+                        {columns.map(col => (
                             <th
                                 key={col.key}
                                 style={{
-                                    width: columnWidths[col.key] || DEFAULT_WIDTHS[col.key] || 100,
+                                    width: columnWidths[col.key] || defaultWidths[col.key] || 100,
                                     minWidth: 50,
                                     maxWidth: 500,
                                     position: 'relative',
@@ -263,7 +307,7 @@ export default function DataTable({ data, loading }) {
                             }}>
                                 {idx + 1}
                             </td>
-                            {DISPLAY_COLUMNS.map(col => {
+                            {columns.map(col => {
                                 const value = row[col.key];
                                 const hasDuplicate = isDuplicate(col.key, value);
                                 return (
@@ -271,8 +315,8 @@ export default function DataTable({ data, loading }) {
                                         key={col.key}
                                         style={{
                                             backgroundColor: hasDuplicate ? 'rgba(250, 204, 21, 0.25)' : 'transparent',
-                                            width: columnWidths[col.key] || DEFAULT_WIDTHS[col.key] || 100,
-                                            maxWidth: columnWidths[col.key] || DEFAULT_WIDTHS[col.key] || 100,
+                                            width: columnWidths[col.key] || defaultWidths[col.key] || 100,
+                                            maxWidth: columnWidths[col.key] || defaultWidths[col.key] || 100,
                                             overflow: 'hidden',
                                             textOverflow: 'ellipsis',
                                             whiteSpace: 'nowrap'
