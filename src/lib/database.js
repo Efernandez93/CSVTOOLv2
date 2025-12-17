@@ -50,6 +50,7 @@ export async function getAllUploads(mode = 'ocean') {
             .from('uploads')
             .select('*')
             .eq('mode', mode)
+            .neq('upload_id', 'master')
             .order('upload_date', { ascending: false });
 
         if (error) {
