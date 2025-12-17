@@ -254,11 +254,23 @@ export async function saveMasterList(data, mode = 'ocean') {
         const tableName = mode === 'air' ? 'air_data' : 'ocean_data';
 
         // Ensure 'master' upload entry exists to satisfy foreign key constraint
-        const { data: masterUpload } = await supabase
+        // Use upsert to handle creation or update idempotently
+        const { error: uploadError } = await supabase
             .from('uploads')
-            .select('upload_id')
-            .eq('upload_id', 'master')
-            .maybeSingle();
+            .upsert({
+                upload_id: 'master',
+                mode: mode,
+                filename: 'MASTER_LIST_SNAPSHOT',
+                row_count: 0
+            }, { onConflict: 'upload_id' });
+
+        if (uploadError) {
+            console.error('Supabase create/update master upload error:', uploadError);
+            throw new Error(`Failed to initialize Master List record: ${uploadError.message}`);
+        }
+
+        // Legacy variable to bypass the old block if it wasn't deleted
+        const masterUpload = true;
 
         if (!masterUpload) {
             const { error: uploadError } = await supabase.from('uploads').insert({
