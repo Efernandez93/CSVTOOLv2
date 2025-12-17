@@ -143,6 +143,8 @@ export async function saveReportData(uploadId, data, mode = 'ocean') {
             }
         });
 
+        console.log('[DEBUG] saveReportData records sample:', records.slice(0, 2));
+
         // Batch insert in chunks if needed, but for now single batch
         const { error } = await supabase
             .from(tableName)
@@ -150,8 +152,9 @@ export async function saveReportData(uploadId, data, mode = 'ocean') {
 
         if (error) {
             console.error(`Supabase saveReportData error (${mode}):`, error);
-            throw error;
+            throw new Error(`Failed to save report data: ${error.message} (${error.details || ''})`);
         }
+        console.log(`[DEBUG] Successfully inserted ${records.length} rows into ${tableName}`);
         return records.length;
     }
 
