@@ -4,13 +4,14 @@
  * Uses the currently filtered/displayed data from Dashboard
  */
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { X, Printer, Download, FileText } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 
 export default function DockTallyReport({ isOpen, onClose, data = [], activeFilter }) {
     const [selectedMBLs, setSelectedMBLs] = useState([]);
     const [generating, setGenerating] = useState(false);
+    const [progress, setProgress] = useState({ current: 0, total: 0, message: '' });
     const printRef = useRef(null);
 
     // Group the passed data by MBL
@@ -65,39 +66,283 @@ export default function DockTallyReport({ isOpen, onClose, data = [], activeFilt
         setGenerating(true);
 
         try {
-            const element = printRef.current;
             const timestamp = new Date().toISOString().split('T')[0];
             const filename = `Dock_Tally_Report_${timestamp}.pdf`;
 
+            // For small number of MBLs, generate directly
+            if (selectedMBLs.length <= 15) {
+                await generateSinglePDF(printRef.current, filename);
+            } else {
+                // For large documents, generate in batches and merge
+                await generateBatchPDF(filename);
+            }
+
+        } catch (err) {
+            console.error('Error generating PDF:', err);
+            alert('Error generating PDF: ' + (err.message || 'Please try again.'));
+        }
+
+        setGenerating(false);
+    };
+
+    // Generate a single PDF from element
+    const generateSinglePDF = async (element, filename) => {
+        const opt = {
+            margin: [5, 10, 5, 10],
+            filename: filename,
+            image: { type: 'jpeg', quality: 0.95 },
+            html2canvas: {
+                scale: 1.5,
+                useCORS: true,
+                letterRendering: true,
+                logging: false,
+                windowWidth: 1100
+            },
+            jsPDF: {
+                unit: 'mm',
+                format: 'letter',
+                orientation: 'landscape'
+            },
+            pagebreak: {
+                mode: ['css', 'legacy'],
+                before: '.page-break'
+            }
+        };
+
+        await html2pdf().set(opt).from(element).save();
+    };
+
+    // Generate PDF in batches and merge
+    const generateBatchPDF = async (filename) => {
+        const { PDFDocument } = await import('pdf-lib');
+
+        const BATCH_SIZE = 10; // Smaller batches for reliability
+        const batches = [];
+
+        // Split selected MBLs into batches
+        for (let i = 0; i < selectedMBLs.length; i += BATCH_SIZE) {
+            batches.push(selectedMBLs.slice(i, i + BATCH_SIZE));
+        }
+
+        setProgress({ current: 0, total: batches.length, message: 'Starting PDF generation...' });
+        console.log(`Generating ${batches.length} batch(es) for ${selectedMBLs.length} MBLs...`);
+
+        // Create merged PDF document
+        const mergedPdf = await PDFDocument.create();
+
+        for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+            const batch = batches[batchIdx];
+            setProgress({
+                current: batchIdx + 1,
+                total: batches.length,
+                message: `Processing batch ${batchIdx + 1} of ${batches.length} (${batch.length} MBLs)...`
+            });
+            console.log(`Processing batch ${batchIdx + 1}/${batches.length} (${batch.length} MBLs)...`);
+
+            // Create an iframe for isolated rendering
+            const iframe = document.createElement('iframe');
+            iframe.style.position = 'fixed';
+            iframe.style.left = '-9999px';
+            iframe.style.top = '0';
+            iframe.style.width = '1100px';
+            iframe.style.height = '800px';
+            iframe.style.border = 'none';
+            document.body.appendChild(iframe);
+
+            // Wait for iframe to load
+            await new Promise(resolve => {
+                iframe.onload = resolve;
+                iframe.src = 'about:blank';
+            });
+
+            const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+
+            // Write complete HTML document to iframe
+            const batchHtml = renderBatchContent(batch);
+            iframeDoc.open();
+            iframeDoc.write(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <style>
+                        * { margin: 0; padding: 0; box-sizing: border-box; }
+                        body { font-family: Arial, sans-serif; background: white; }
+                        .page-break { page-break-before: always; }
+                    </style>
+                </head>
+                <body>
+                    ${batchHtml}
+                </body>
+                </html>
+            `);
+            iframeDoc.close();
+
+            // Wait for content to render
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            // Generate PDF for this batch
             const opt = {
-                margin: [10, 10, 10, 10],
-                filename: filename,
-                image: { type: 'jpeg', quality: 0.98 },
+                margin: [5, 10, 5, 10],
+                image: { type: 'jpeg', quality: 0.90 },
                 html2canvas: {
-                    scale: 2,
+                    scale: 1.5,
                     useCORS: true,
-                    letterRendering: true
+                    letterRendering: true,
+                    logging: false,
+                    windowWidth: 1100
                 },
                 jsPDF: {
                     unit: 'mm',
                     format: 'letter',
-                    orientation: 'portrait'
+                    orientation: 'landscape'
                 },
                 pagebreak: {
-                    mode: ['avoid-all', 'css', 'legacy'],
-                    before: '.report-page'
+                    mode: ['css', 'legacy'],
+                    before: '.page-break'
                 }
             };
 
-            // Generate and save the PDF using html2pdf's built-in save method
-            await html2pdf().set(opt).from(element).save();
+            try {
+                // Get PDF as array buffer from the iframe body
+                const pdfBlob = await html2pdf().set(opt).from(iframeDoc.body).outputPdf('blob');
+                const pdfBytes = await pdfBlob.arrayBuffer();
 
-        } catch (err) {
-            console.error('Error generating PDF:', err);
-            alert('Error generating PDF. Please try again.');
+                // Load and merge
+                const batchPdf = await PDFDocument.load(pdfBytes);
+                const pages = await mergedPdf.copyPages(batchPdf, batchPdf.getPageIndices());
+                pages.forEach(page => mergedPdf.addPage(page));
+            } catch (batchErr) {
+                console.error(`Error in batch ${batchIdx + 1}:`, batchErr);
+                throw new Error(`Failed on batch ${batchIdx + 1}: ${batchErr.message}`);
+            }
+
+            // Cleanup iframe
+            document.body.removeChild(iframe);
+
+            // Delay to prevent browser from freezing
+            await new Promise(resolve => setTimeout(resolve, 200));
         }
 
-        setGenerating(false);
+        setProgress({ current: batches.length, total: batches.length, message: 'Merging PDFs...' });
+
+        // Save merged PDF
+        const mergedPdfBytes = await mergedPdf.save();
+        const blob = new Blob([mergedPdfBytes], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        link.click();
+
+        URL.revokeObjectURL(url);
+        setProgress({ current: 0, total: 0, message: '' });
+        console.log('PDF generation complete!');
+    };
+
+    // Render content for a batch of MBLs
+    const renderBatchContent = (mblBatch) => {
+        let html = '';
+
+        mblBatch.forEach((mbl, mblIdx) => {
+            const group = groupedData[mbl];
+            if (!group) return;
+
+            const itemsPerPage = 6;
+            const pages = [];
+            for (let i = 0; i < group.items.length; i += itemsPerPage) {
+                pages.push(group.items.slice(i, i + itemsPerPage));
+            }
+
+            pages.forEach((pageItems, pageIdx) => {
+                const isPageBreak = (mblIdx > 0 && pageIdx === 0) || pageIdx > 0;
+
+                html += `<div class="${isPageBreak ? 'page-break' : ''}" style="color: black; font-family: Arial, sans-serif; font-size: 11px; background-color: white; padding-top: ${pageIdx > 0 ? '10px' : '0'};">`;
+
+                // Header (only on first page of each MBL)
+                if (pageIdx === 0) {
+                    html += `
+                        <table style="width: 100%; border-collapse: collapse; border: 2px solid black; margin-bottom: -2px; position: relative; z-index: 1;">
+                            <tbody>
+                                <tr>
+                                    <td colspan="3" style="text-align: center; font-weight: bold; font-size: 14px; padding: 6px; border-bottom: 2px solid black;">
+                                        Ocean Dock Tally Report
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td style="width: 35%; padding: 6px 10px; border-right: 1px solid black; font-weight: bold;">
+                                        MBL: ${mbl}
+                                    </td>
+                                    <td style="width: 35%; padding: 6px 10px; border-right: 1px solid black; font-weight: bold;">
+                                        Container: ${group.containers.join(', ')}
+                                    </td>
+                                    <td style="width: 30%; padding: 6px 10px; font-weight: bold;">
+                                        Arrival:
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    `;
+                }
+
+                // Data table
+                html += `
+                    <table style="width: 100%; border-collapse: collapse; font-size: 10px; border: 2px solid black; border-top: ${pageIdx === 0 ? 'none' : '2px solid black'};">
+                        <thead>
+                            <tr>
+                                <th style="width: 15%; padding: 6px 4px; border-right: 1px solid black; border-bottom: 1px solid black; font-weight: bold;">HB</th>
+                                <th style="width: 12%; padding: 6px 4px; border-right: 1px solid black; border-bottom: 1px solid black; font-weight: bold;">Dest</th>
+                                <th style="width: 10%; padding: 6px 4px; border-right: 1px solid black; border-bottom: 1px solid black; font-weight: bold;">
+                                    <div>Mfst Qty</div>
+                                    <div style="font-size: 8px; font-weight: normal;">(Outer/PCS)</div>
+                                </th>
+                                <th style="width: 10%; padding: 6px 4px; border-right: 1px solid black; border-bottom: 1px solid black; font-weight: bold;">PCS</th>
+                                <th style="width: 10%; padding: 6px 4px; border-right: 1px solid black; border-bottom: 1px solid black; font-weight: bold;">LOC</th>
+                                <th style="width: 10%; padding: 6px 4px; border-right: 1px solid black; border-bottom: 1px solid black; font-weight: bold;">TIME</th>
+                                <th style="width: 10%; padding: 6px 4px; border-right: 1px solid black; border-bottom: 1px solid black; font-weight: bold;">DMG</th>
+                                <th style="width: 10%; padding: 6px 4px; border-bottom: 1px solid black; font-weight: bold;">CRW</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+
+                pageItems.forEach(item => {
+                    html += `
+                        <tr>
+                            <td style="padding: 6px; border-right: 1px solid black; border-bottom: 1px solid black; font-weight: bold; vertical-align: middle; height: 28px;">
+                                ${item.hb || ''}
+                            </td>
+                            <td style="padding: 6px; border-right: 1px solid black; border-bottom: 1px solid black; vertical-align: middle;">
+                                ${item.dest || ''}
+                            </td>
+                            <td style="border-right: 1px solid black; border-bottom: 1px solid black; text-align: center; vertical-align: middle; padding: 0;">
+                                <div style="border-bottom: 1px solid black; padding: 4px; font-weight: bold;">${item.outer_quantity || ''}</div>
+                                <div style="padding: 4px;">${item.pcs || ''}</div>
+                            </td>
+                            <td style="border-right: 1px solid black; border-bottom: 1px solid black;"></td>
+                            <td style="border-right: 1px solid black; border-bottom: 1px solid black;"></td>
+                            <td style="border-right: 1px solid black; border-bottom: 1px solid black;"></td>
+                            <td style="border-right: 1px solid black; border-bottom: 1px solid black;"></td>
+                            <td style="border-bottom: 1px solid black;"></td>
+                        </tr>
+                        <tr>
+                            <td style="height: 50px; border-right: 1px solid black; border-bottom: 2px solid black;"></td>
+                            <td style="border-right: 1px solid black; border-bottom: 2px solid black;"></td>
+                            <td style="border-right: 1px solid black; border-bottom: 2px solid black;"></td>
+                            <td style="border-right: 1px solid black; border-bottom: 2px solid black;"></td>
+                            <td style="border-right: 1px solid black; border-bottom: 2px solid black;"></td>
+                            <td style="border-right: 1px solid black; border-bottom: 2px solid black;"></td>
+                            <td style="border-right: 1px solid black; border-bottom: 2px solid black;"></td>
+                            <td style="border-bottom: 2px solid black;"></td>
+                        </tr>
+                    `;
+                });
+
+                html += `</tbody></table></div>`;
+            });
+        });
+
+        return html;
     };
 
     const handlePrint = () => {
@@ -319,142 +564,155 @@ export default function DockTallyReport({ isOpen, onClose, data = [], activeFilt
                                 background: 'white'
                             }}>
                                 <div ref={printRef}>
-                                    {selectedMBLs.map(mbl => {
+                                    {selectedMBLs.map((mbl, mblIdx) => {
                                         const group = groupedData[mbl];
                                         if (!group) return null;
 
-                                        return (
-                                            <div key={mbl} className="report-page" style={{
-                                                padding: '20px',
-                                                color: 'black',
-                                                fontFamily: 'Arial, sans-serif',
-                                                fontSize: '12px',
-                                                backgroundColor: 'white',
-                                                pageBreakAfter: 'always'
-                                            }}>
-                                                {/* Header */}
-                                                <div style={{ border: '2px solid black' }}>
-                                                    <div style={{
-                                                        textAlign: 'center',
-                                                        fontWeight: 'bold',
-                                                        fontSize: '14px',
-                                                        padding: '8px',
-                                                        borderBottom: '2px solid black',
-                                                        backgroundColor: '#f0f0f0'
-                                                    }}>
-                                                        Ocean Dock Tally Report
-                                                    </div>
+                                        // Split items into chunks of 6 for pagination
+                                        const itemsPerPage = 6;
+                                        const pages = [];
+                                        for (let i = 0; i < group.items.length; i += itemsPerPage) {
+                                            pages.push(group.items.slice(i, i + itemsPerPage));
+                                        }
 
-                                                    <div style={{ display: 'flex' }}>
-                                                        {/* Left Panel - MBL/Container Info */}
-                                                        <div style={{
-                                                            width: '200px',
-                                                            borderRight: '2px solid black',
-                                                            padding: '8px',
-                                                            backgroundColor: 'white'
-                                                        }}>
-                                                            <p style={{ margin: '4px 0', fontWeight: 'bold' }}>
-                                                                MB: {mbl}
-                                                            </p>
-                                                            <p style={{ margin: '4px 0', fontWeight: 'bold' }}>
-                                                                CO: {group.containers.join(', ')}
-                                                            </p>
-                                                            <p style={{ margin: '4px 0', fontWeight: 'bold' }}>HB:</p>
-                                                            <p style={{ margin: '4px 0', fontWeight: 'bold' }}>Destination:</p>
-                                                            <p style={{ margin: '4px 0', fontWeight: 'bold' }}>Dock Notes:</p>
-                                                        </div>
-
-                                                        {/* Right Panel - Table */}
-                                                        <div style={{ flex: 1, backgroundColor: 'white' }}>
-                                                            <div style={{
-                                                                textAlign: 'center',
-                                                                fontWeight: 'bold',
-                                                                padding: '4px',
-                                                                borderBottom: '1px solid black',
-                                                                background: '#f0f0f0'
-                                                            }}>
-                                                                Arrival
-                                                            </div>
-                                                            <div style={{
-                                                                display: 'flex',
-                                                                borderBottom: '1px solid black',
-                                                                background: '#f0f0f0',
-                                                                fontWeight: 'bold',
-                                                                fontSize: '10px'
-                                                            }}>
-                                                                <div style={{ width: '70px', padding: '4px', borderRight: '1px solid black' }}>Mfst Qty</div>
-                                                                <div style={{ width: '60px', padding: '4px', borderRight: '1px solid black' }}>PCS</div>
-                                                                <div style={{ width: '60px', padding: '4px', borderRight: '1px solid black' }}>LOC</div>
-                                                                <div style={{ width: '60px', padding: '4px', borderRight: '1px solid black' }}>TIME</div>
-                                                                <div style={{ width: '60px', padding: '4px', borderRight: '1px solid black' }}>DMG</div>
-                                                                <div style={{ flex: 1, padding: '4px' }}>CRW</div>
-                                                            </div>
-
-                                                            {/* Data Rows */}
-                                                            {group.items.map((item, idx) => (
-                                                                <div key={idx} style={{ display: 'flex', minHeight: '50px', backgroundColor: 'white' }}>
-                                                                    {/* Mfst Qty */}
-                                                                    <div style={{
-                                                                        width: '70px',
-                                                                        borderRight: '1px solid black',
-                                                                        borderBottom: '1px solid black',
-                                                                        display: 'flex',
-                                                                        flexDirection: 'column'
-                                                                    }}>
-                                                                        <div style={{
-                                                                            flex: 1,
-                                                                            padding: '4px',
-                                                                            borderBottom: '1px solid #ccc'
-                                                                        }}>
-                                                                            {item.outer_quantity || ''}
-                                                                        </div>
-                                                                        <div style={{ flex: 1, padding: '4px' }}>
-                                                                            {item.pcs || ''}
-                                                                        </div>
-                                                                    </div>
-                                                                    {/* Empty cells for manual entry */}
-                                                                    <div style={{ width: '60px', borderRight: '1px solid black', borderBottom: '1px solid black' }}></div>
-                                                                    <div style={{ width: '60px', borderRight: '1px solid black', borderBottom: '1px solid black' }}></div>
-                                                                    <div style={{ width: '60px', borderRight: '1px solid black', borderBottom: '1px solid black' }}></div>
-                                                                    <div style={{ width: '60px', borderRight: '1px solid black', borderBottom: '1px solid black' }}></div>
-                                                                    <div style={{ flex: 1, borderBottom: '1px solid black' }}></div>
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-
-                                                    {/* HB/Destination List (left side continuation) */}
-                                                    <div style={{ borderTop: '1px solid black', padding: '8px', backgroundColor: 'white' }}>
-                                                        <table style={{
-                                                            width: '100%',
-                                                            borderCollapse: 'collapse',
-                                                            fontSize: '11px'
-                                                        }}>
+                                        return pages.map((pageItems, pageIdx) => (
+                                            <div
+                                                key={`${mbl}-page-${pageIdx}`}
+                                                className={(mblIdx > 0 && pageIdx === 0) || pageIdx > 0 ? 'page-break' : ''}
+                                                style={{
+                                                    color: 'black',
+                                                    fontFamily: 'Arial, sans-serif',
+                                                    fontSize: '11px',
+                                                    backgroundColor: 'white',
+                                                    paddingTop: pageIdx > 0 ? '10px' : '0',
+                                                    backgroundColor: 'white',
+                                                    paddingTop: pageIdx > 0 ? '10px' : '0'
+                                                }}
+                                            >
+                                                {/* Header - Only show on first page of each MBL */}
+                                                {pageIdx === 0 && (
+                                                    <>
+                                                        {/* MBL/Container/Arrival Header with Title Merged */}
+                                                        <table style={{ width: '100%', borderCollapse: 'collapse', border: '2px solid black', marginBottom: '-2px', position: 'relative', zIndex: 1 }}>
                                                             <tbody>
-                                                                {group.items.map((item, idx) => (
-                                                                    <tr key={idx}>
-                                                                        <td style={{
-                                                                            padding: '4px 8px',
-                                                                            borderBottom: '1px solid #ddd',
-                                                                            width: '150px',
-                                                                            fontWeight: 'bold'
-                                                                        }}>
-                                                                            {item.hb || ''}
-                                                                        </td>
-                                                                        <td style={{
-                                                                            padding: '4px 8px',
-                                                                            borderBottom: '1px solid #ddd'
-                                                                        }}>
-                                                                            {item.dest || ''}
-                                                                        </td>
-                                                                    </tr>
-                                                                ))}
+                                                                <tr>
+                                                                    <td colSpan="3" style={{
+                                                                        textAlign: 'center',
+                                                                        fontWeight: 'bold',
+                                                                        fontSize: '14px',
+                                                                        padding: '6px',
+                                                                        borderBottom: '2px solid black'
+                                                                    }}>
+                                                                        Ocean Dock Tally Report
+                                                                    </td>
+                                                                </tr>
+                                                                <tr>
+                                                                    <td style={{
+                                                                        width: '35%',
+                                                                        padding: '6px 10px',
+                                                                        borderRight: '1px solid black',
+                                                                        fontWeight: 'bold'
+                                                                    }}>
+                                                                        MBL: {mbl}
+                                                                    </td>
+                                                                    <td style={{
+                                                                        width: '35%',
+                                                                        padding: '6px 10px',
+                                                                        borderRight: '1px solid black',
+                                                                        fontWeight: 'bold'
+                                                                    }}>
+                                                                        Container: {group.containers.join(', ')}
+                                                                    </td>
+                                                                    <td style={{
+                                                                        width: '30%',
+                                                                        padding: '6px 10px',
+                                                                        fontWeight: 'bold'
+                                                                    }}>
+                                                                        Arrival:
+                                                                    </td>
+                                                                </tr>
                                                             </tbody>
                                                         </table>
-                                                    </div>
-                                                </div>
+                                                    </>
+                                                )}
+
+                                                {/* Data Table */}
+                                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '10px', border: '2px solid black', borderTop: pageIdx === 0 ? 'none' : '2px solid black' }}>
+                                                    <thead>
+                                                        <tr>
+                                                            <th style={{ width: '15%', padding: '6px 4px', borderRight: '1px solid black', borderBottom: '1px solid black', fontWeight: 'bold' }}>HB</th>
+                                                            <th style={{ width: '12%', padding: '6px 4px', borderRight: '1px solid black', borderBottom: '1px solid black', fontWeight: 'bold' }}>Dest</th>
+                                                            <th style={{ width: '10%', padding: '6px 4px', borderRight: '1px solid black', borderBottom: '1px solid black', fontWeight: 'bold' }}>
+                                                                <div>Mfst Qty</div>
+                                                                <div style={{ fontSize: '8px', fontWeight: 'normal' }}>(Outer/PCS)</div>
+                                                            </th>
+                                                            <th style={{ width: '10%', padding: '6px 4px', borderRight: '1px solid black', borderBottom: '1px solid black', fontWeight: 'bold' }}>PCS</th>
+                                                            <th style={{ width: '10%', padding: '6px 4px', borderRight: '1px solid black', borderBottom: '1px solid black', fontWeight: 'bold' }}>LOC</th>
+                                                            <th style={{ width: '10%', padding: '6px 4px', borderRight: '1px solid black', borderBottom: '1px solid black', fontWeight: 'bold' }}>TIME</th>
+                                                            <th style={{ width: '10%', padding: '6px 4px', borderRight: '1px solid black', borderBottom: '1px solid black', fontWeight: 'bold' }}>DMG</th>
+                                                            <th style={{ width: '10%', padding: '6px 4px', borderBottom: '1px solid black', fontWeight: 'bold' }}>CRW</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {pageItems.map((item, idx) => (
+                                                            <React.Fragment key={idx}>
+                                                                {/* Data Row */}
+                                                                <tr>
+                                                                    <td style={{
+                                                                        padding: '6px',
+                                                                        borderRight: '1px solid black',
+                                                                        borderBottom: '1px solid black',
+                                                                        fontWeight: 'bold',
+                                                                        verticalAlign: 'middle',
+                                                                        height: '28px'
+                                                                    }}>
+                                                                        {item.hb || ''}
+                                                                    </td>
+                                                                    <td style={{
+                                                                        padding: '6px',
+                                                                        borderRight: '1px solid black',
+                                                                        borderBottom: '1px solid black',
+                                                                        verticalAlign: 'middle'
+                                                                    }}>
+                                                                        {item.dest || ''}
+                                                                    </td>
+                                                                    <td style={{
+                                                                        borderRight: '1px solid black',
+                                                                        borderBottom: '1px solid black',
+                                                                        textAlign: 'center',
+                                                                        verticalAlign: 'middle',
+                                                                        padding: 0
+                                                                    }}>
+                                                                        <div style={{ borderBottom: '1px solid black', padding: '4px', fontWeight: 'bold' }}>
+                                                                            {item.outer_quantity || ''}
+                                                                        </div>
+                                                                        <div style={{ padding: '4px' }}>
+                                                                            {item.pcs || ''}
+                                                                        </div>
+                                                                    </td>
+                                                                    <td style={{ borderRight: '1px solid black', borderBottom: '1px solid black' }}></td>
+                                                                    <td style={{ borderRight: '1px solid black', borderBottom: '1px solid black' }}></td>
+                                                                    <td style={{ borderRight: '1px solid black', borderBottom: '1px solid black' }}></td>
+                                                                    <td style={{ borderRight: '1px solid black', borderBottom: '1px solid black' }}></td>
+                                                                    <td style={{ borderBottom: '1px solid black' }}></td>
+                                                                </tr>
+                                                                {/* Notes Row - with same columns so lines connect */}
+                                                                <tr>
+                                                                    <td style={{ height: '50px', borderRight: '1px solid black', borderBottom: '2px solid black' }}></td>
+                                                                    <td style={{ borderRight: '1px solid black', borderBottom: '2px solid black' }}></td>
+                                                                    <td style={{ borderRight: '1px solid black', borderBottom: '2px solid black' }}></td>
+                                                                    <td style={{ borderRight: '1px solid black', borderBottom: '2px solid black' }}></td>
+                                                                    <td style={{ borderRight: '1px solid black', borderBottom: '2px solid black' }}></td>
+                                                                    <td style={{ borderRight: '1px solid black', borderBottom: '2px solid black' }}></td>
+                                                                    <td style={{ borderRight: '1px solid black', borderBottom: '2px solid black' }}></td>
+                                                                    <td style={{ borderBottom: '2px solid black' }}></td>
+                                                                </tr>
+                                                            </React.Fragment>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
                                             </div>
-                                        );
+                                        ));
                                     })}
                                 </div>
                             </div>
@@ -462,35 +720,69 @@ export default function DockTallyReport({ isOpen, onClose, data = [], activeFilt
                     )}
                 </div>
 
-                <div className="modal-footer">
-                    <button className="btn btn-secondary" onClick={onClose}>
-                        Close
-                    </button>
-                    <button
-                        className="btn btn-secondary"
-                        onClick={handlePrint}
-                        disabled={selectedMBLs.length === 0}
-                    >
-                        <Printer size={18} />
-                        Print
-                    </button>
-                    <button
-                        className="btn btn-primary"
-                        onClick={handleDownloadPDF}
-                        disabled={selectedMBLs.length === 0 || generating}
-                    >
-                        {generating ? (
-                            <>
-                                <span className="loading-spinner" style={{ width: '16px', height: '16px' }}></span>
-                                Generating...
-                            </>
-                        ) : (
-                            <>
-                                <Download size={18} />
-                                Download PDF
-                            </>
-                        )}
-                    </button>
+                <div className="modal-footer" style={{ flexDirection: 'column', gap: '12px' }}>
+                    {/* Progress Bar */}
+                    {generating && progress.total > 0 && (
+                        <div style={{ width: '100%' }}>
+                            <div style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                marginBottom: '6px',
+                                fontSize: '0.85rem',
+                                color: 'var(--text-secondary)'
+                            }}>
+                                <span>{progress.message}</span>
+                                <span>{Math.round((progress.current / progress.total) * 100)}%</span>
+                            </div>
+                            <div style={{
+                                width: '100%',
+                                height: '8px',
+                                background: 'var(--bg-tertiary)',
+                                borderRadius: '4px',
+                                overflow: 'hidden'
+                            }}>
+                                <div style={{
+                                    width: `${(progress.current / progress.total) * 100}%`,
+                                    height: '100%',
+                                    background: 'linear-gradient(90deg, var(--cyan-primary), var(--cyan-light))',
+                                    borderRadius: '4px',
+                                    transition: 'width 0.3s ease'
+                                }} />
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Buttons */}
+                    <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', width: '100%' }}>
+                        <button className="btn btn-secondary" onClick={onClose}>
+                            Close
+                        </button>
+                        <button
+                            className="btn btn-secondary"
+                            onClick={handlePrint}
+                            disabled={selectedMBLs.length === 0 || generating}
+                        >
+                            <Printer size={18} />
+                            Print
+                        </button>
+                        <button
+                            className="btn btn-primary"
+                            onClick={handleDownloadPDF}
+                            disabled={selectedMBLs.length === 0 || generating}
+                        >
+                            {generating ? (
+                                <>
+                                    <span className="loading-spinner" style={{ width: '16px', height: '16px' }}></span>
+                                    {progress.total > 0 ? `Batch ${progress.current}/${progress.total}` : 'Generating...'}
+                                </>
+                            ) : (
+                                <>
+                                    <Download size={18} />
+                                    Download PDF
+                                </>
+                            )}
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
