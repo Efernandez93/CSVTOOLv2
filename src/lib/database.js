@@ -1,482 +1,397 @@
 /**
- * Database operations for CSV Dock Tally application
+ * Database Layer - Supabase with localStorage fallback
+ * Automatically uses Supabase if configured, otherwise falls back to localStorage
  */
 
-import { supabase } from './supabase';
+import { supabase, isSupabaseEnabled } from './supabaseClient.js';
+import * as localDB from './localDatabase.js';
 
-/**
- * UPLOADS TABLE OPERATIONS
- */
-
-export async function saveUpload(filename, rowCount) {
-    const { data, error } = await supabase
-        .from('uploads')
-        .insert({
-            filename,
-            row_count: rowCount,
-            upload_date: new Date().toISOString(),
-        })
-        .select()
-        .single();
-
-    if (error) {
-        console.error('Error saving upload:', error);
-        return null;
-    }
-    return data;
-}
-
-export async function getAllUploads() {
-    const { data, error } = await supabase
-        .from('uploads')
-        .select('*')
-        .order('upload_date', { ascending: false });
-
-    if (error) {
-        console.error('Error getting uploads:', error);
-        return [];
-    }
-    return data;
-}
-
-export async function deleteUpload(uploadId) {
-    // Delete report data first
-    await supabase.from('report_data').delete().eq('upload_id', uploadId);
-
-    // Delete the upload record
-    const { error } = await supabase.from('uploads').delete().eq('id', uploadId);
-
-    if (error) {
-        console.error('Error deleting upload:', error);
-        return false;
-    }
-    return true;
+// Helper to generate unique IDs
+function generateId() {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
 /**
- * REPORT DATA OPERATIONS
+ * UPLOADS OPERATIONS
  */
 
-export async function saveReportData(uploadId, rows) {
-    const dataToInsert = rows.map(row => ({
-        upload_id: uploadId,
-        container: row['CONTAINER'] || null,
-        seal_number: row['SEAL #'] || null,
-        carrier: row['CARRIER'] || null,
-        mbl: row['MBL'] || null,
-        mi: row['MI'] || null,
-        vessel: row['VESSEL'] || null,
-        hb: normalizeHB(row['HB']),
-        outer_quantity: row['OUTER QUANTITY'] || null,
-        pcs: row['PCS'] || null,
-        wt_lbs: row['WT_LBS'] || null,
-        cnee: row['CNEE'] || null,
-        frl: row['FRL'] || null,
-        file_no: row['FILE_NO'] || null,
-        dest: row['DEST'] || null,
-        volume: row['VOLUME'] || null,
-        vbond: row['VBOND#'] || null,
-        tdf: row['TDF'] || null,
-    }));
+export async function saveUpload(filename, rowCount, mode = 'ocean') {
+    if (isSupabaseEnabled()) {
+        const uploadId = generateId();
+        const { data, error } = await supabase
+            .from('uploads')
+            .insert({
+                upload_id: uploadId,
+                mode,
+                filename,
+                row_count: rowCount,
+            })
+            .select()
+            .single();
 
-    const { data, error } = await supabase
-        .from('report_data')
-        .insert(dataToInsert)
-        .select();
-
-    if (error) {
-        console.error('Error saving report data:', error);
-        return null;
+        if (error) {
+            console.error('Supabase saveUpload error:', error);
+            throw error;
+        }
+        return { id: data.upload_id, ...data };
     }
-    return data.length;
+
+    // Fallback to localStorage
+    if (mode === 'air') {
+        return localDB.saveAirUpload(filename, rowCount);
+    }
+    return localDB.saveUpload(filename, rowCount);
 }
 
-export async function getReportData(uploadId, filter = 'all') {
-    let query = supabase
-        .from('report_data')
-        .select('*')
-        .eq('upload_id', uploadId)
-        .order('id', { ascending: true });
+export async function getAllUploads(mode = 'ocean') {
+    if (isSupabaseEnabled()) {
+        const { data, error } = await supabase
+            .from('uploads')
+            .select('*')
+            .eq('mode', mode)
+            .order('upload_date', { ascending: false });
 
-    if (filter === 'with_frl') {
-        query = query.not('frl', 'is', null).neq('frl', '');
-    } else if (filter === 'without_frl') {
-        query = query.or('frl.is.null,frl.eq.');
+        if (error) {
+            console.error('Supabase getAllUploads error:', error);
+            return [];
+        }
+        return data.map(u => ({ id: u.upload_id, ...u }));
     }
 
-    const { data, error } = await query;
-
-    if (error) {
-        console.error('Error getting report data:', error);
-        return [];
+    // Fallback to localStorage
+    if (mode === 'air') {
+        return localDB.getAllAirUploads();
     }
-    return data;
+    return localDB.getAllUploads();
+}
+
+export async function deleteUpload(uploadId, mode = 'ocean') {
+    if (isSupabaseEnabled()) {
+        const { error } = await supabase
+            .from('uploads')
+            .delete()
+            .eq('upload_id', uploadId);
+
+        if (error) {
+            console.error('Supabase deleteUpload error:', error);
+            throw error;
+        }
+        return;
+    }
+
+    // Fallback to localStorage
+    if (mode === 'air') {
+        return localDB.deleteAirUpload(uploadId);
+    }
+    return localDB.deleteUpload(uploadId);
+}
+
+/**
+ * REPORT DATA OPERATIONS (Ocean)
+ */
+
+export async function saveReportData(uploadId, data, mode = 'ocean') {
+    if (isSupabaseEnabled()) {
+        const tableName = mode === 'air' ? 'air_data' : 'ocean_data';
+
+        const records = data.map(row => ({
+            upload_id: uploadId,
+            ...row,
+            status: 'active',
+        }));
+
+        const { error } = await supabase
+            .from(tableName)
+            .insert(records);
+
+        if (error) {
+            console.error(`Supabase saveReportData error (${mode}):`, error);
+            throw error;
+        }
+        return;
+    }
+
+    // Fallback to localStorage
+    if (mode === 'air') {
+        return localDB.saveAirReportData(uploadId, data);
+    }
+    return localDB.saveReportData(uploadId, data);
+}
+
+export async function getReportData(uploadId, mode = 'ocean') {
+    if (isSupabaseEnabled()) {
+        const tableName = mode === 'air' ? 'air_data' : 'ocean_data';
+
+        const { data, error } = await supabase
+            .from(tableName)
+            .select('*')
+            .eq('upload_id', uploadId)
+            .eq('status', 'active');
+
+        if (error) {
+            console.error(`Supabase getReportData error (${mode}):`, error);
+            return [];
+        }
+        return data;
+    }
+
+    // Fallback to localStorage
+    if (mode === 'air') {
+        return localDB.getAirReportData(uploadId);
+    }
+    return localDB.getReportData(uploadId);
+}
+
+export async function getAllReportData(mode = 'ocean') {
+    if (isSupabaseEnabled()) {
+        const tableName = mode === 'air' ? 'air_data' : 'ocean_data';
+
+        const { data, error } = await supabase
+            .from(tableName)
+            .select('*')
+            .eq('status', 'active')
+            .order('created_at', { ascending: false });
+
+        if (error) {
+            console.error(`Supabase getAllReportData error (${mode}):`, error);
+            return [];
+        }
+        return data;
+    }
+
+    // Fallback to localStorage
+    if (mode === 'air') {
+        return localDB.getAllAirReportData();
+    }
+    return localDB.getAllReportData();
+}
+
+export async function deleteReportData(uploadId, mode = 'ocean') {
+    if (isSupabaseEnabled()) {
+        const tableName = mode === 'air' ? 'air_data' : 'ocean_data';
+
+        const { error } = await supabase
+            .from(tableName)
+            .delete()
+            .eq('upload_id', uploadId);
+
+        if (error) {
+            console.error(`Supabase deleteReportData error (${mode}):`, error);
+            throw error;
+        }
+        return;
+    }
+
+    // Fallback to localStorage
+    if (mode === 'air') {
+        return localDB.deleteAirReportData(uploadId);
+    }
+    return localDB.deleteReportData(uploadId);
 }
 
 /**
  * MASTER LIST OPERATIONS
  */
 
-export async function updateMasterList(uploadId, rows) {
-    let itemsAdded = 0;
-    let itemsUpdated = 0;
+export async function saveMasterList(data, mode = 'ocean') {
+    if (isSupabaseEnabled()) {
+        const tableName = mode === 'air' ? 'air_data' : 'ocean_data';
 
-    for (const row of rows) {
-        const hb = normalizeHB(row['HB']);
-        if (!hb) continue;
+        // Mark all existing as inactive first
+        await supabase
+            .from(tableName)
+            .update({ status: 'inactive' })
+            .eq('status', 'active');
 
-        // Check if item exists in master list
-        const { data: existing } = await supabase
-            .from('master_list')
-            .select('id, frl, tdf, vbond')
-            .eq('hb', hb)
-            .single();
+        // Insert new master list
+        const records = data.map(row => ({
+            upload_id: 'master',
+            ...row,
+            status: 'active',
+        }));
 
-        const itemData = {
-            container: row['CONTAINER'] || null,
-            seal_number: row['SEAL #'] || null,
-            carrier: row['CARRIER'] || null,
-            mbl: row['MBL'] || null,
-            mi: row['MI'] || null,
-            vessel: row['VESSEL'] || null,
-            hb: hb,
-            outer_quantity: row['OUTER QUANTITY'] || null,
-            pcs: row['PCS'] || null,
-            wt_lbs: row['WT_LBS'] || null,
-            cnee: row['CNEE'] || null,
-            frl: row['FRL'] || null,
-            file_no: row['FILE_NO'] || null,
-            dest: row['DEST'] || null,
-            volume: row['VOLUME'] || null,
-            vbond: row['VBOND#'] || null,
-            tdf: row['TDF'] || null,
-            last_updated_upload_id: uploadId,
-            updated_at: new Date().toISOString(),
-        };
+        const { error } = await supabase
+            .from(tableName)
+            .insert(records);
 
-        if (existing) {
-            // Determine update reason
-            let updateReason = [];
-            if (hasValueChanged(existing.frl, row['FRL'])) updateReason.push('FRL');
-            if (hasValueChanged(existing.tdf, row['TDF'])) updateReason.push('TDF');
-            if (hasValueChanged(existing.vbond, row['VBOND#'])) updateReason.push('VBOND');
-
-            if (updateReason.length > 0) {
-                itemData.last_update_reason = updateReason.join(', ');
-                await supabase.from('master_list').update(itemData).eq('id', existing.id);
-                itemsUpdated++;
-            }
-        } else {
-            // New item
-            itemData.first_seen_upload_id = uploadId;
-            itemData.created_at = new Date().toISOString();
-            await supabase.from('master_list').insert(itemData);
-            itemsAdded++;
+        if (error) {
+            console.error(`Supabase saveMasterList error (${mode}):`, error);
+            throw error;
         }
+        return;
     }
 
-    return { itemsAdded, itemsUpdated };
+    // Fallback to localStorage
+    if (mode === 'air') {
+        return localDB.saveAirMasterList(data);
+    }
+    return localDB.saveMasterList(data);
 }
 
-export async function getMasterListData(filter = 'all') {
-    let query = supabase
-        .from('master_list')
-        .select('*')
-        .order('id', { ascending: true });
+export async function getMasterList(mode = 'ocean') {
+    if (isSupabaseEnabled()) {
+        const tableName = mode === 'air' ? 'air_data' : 'ocean_data';
 
-    if (filter === 'with_frl') {
-        query = query.not('frl', 'is', null).neq('frl', '');
-    } else if (filter === 'without_frl') {
-        query = query.or('frl.is.null,frl.eq.');
+        const { data, error } = await supabase
+            .from(tableName)
+            .select('*')
+            .eq('upload_id', 'master')
+            .eq('status', 'active');
+
+        if (error) {
+            console.error(`Supabase getMasterList error (${mode}):`, error);
+            return [];
+        }
+        return data;
     }
 
-    const { data, error } = await query;
-
-    if (error) {
-        console.error('Error getting master list:', error);
-        return [];
+    // Fallback to localStorage
+    if (mode === 'air') {
+        return localDB.getAirMasterList();
     }
-    return data;
+    return localDB.getMasterList();
 }
 
-export async function getMasterListMetrics() {
-    const { data: allData } = await supabase.from('master_list').select('frl');
-
-    if (!allData) return { totalRows: 0, withFrl: 0, withoutFrl: 0 };
-
-    const totalRows = allData.length;
-    const withFrl = allData.filter(r => r.frl && r.frl.trim() !== '').length;
-    const withoutFrl = totalRows - withFrl;
-
-    return { totalRows, withFrl, withoutFrl };
+export async function updateMasterList(data, mode = 'ocean') {
+    return saveMasterList(data, mode);
 }
 
-export async function getLatestUploadId() {
-    const { data } = await supabase
-        .from('uploads')
-        .select('id')
-        .order('upload_date', { ascending: false })
-        .limit(1)
-        .single();
+export async function clearMasterList(mode = 'ocean') {
+    if (isSupabaseEnabled()) {
+        const tableName = mode === 'air' ? 'air_data' : 'ocean_data';
 
-    return data?.id || null;
-}
+        const { error } = await supabase
+            .from(tableName)
+            .delete()
+            .eq('upload_id', 'master');
 
-export async function getMasterListNewItems() {
-    const latestUploadId = await getLatestUploadId();
-    if (!latestUploadId) return { count: 0, data: [] };
-
-    const { data, error } = await supabase
-        .from('master_list')
-        .select('*')
-        .eq('first_seen_upload_id', latestUploadId);
-
-    if (error) {
-        console.error('Error getting new items:', error);
-        return { count: 0, data: [] };
+        if (error) {
+            console.error(`Supabase clearMasterList error (${mode}):`, error);
+            throw error;
+        }
+        return;
     }
 
-    return { count: data.length, data };
-}
-
-export async function getMasterListUpdatedItems() {
-    const latestUploadId = await getLatestUploadId();
-    if (!latestUploadId) return { count: 0, data: [] };
-
-    const { data, error } = await supabase
-        .from('master_list')
-        .select('*')
-        .eq('last_updated_upload_id', latestUploadId)
-        .not('last_update_reason', 'is', null);
-
-    if (error) {
-        console.error('Error getting updated items:', error);
-        return { count: 0, data: [] };
+    // Fallback to localStorage
+    if (mode === 'air') {
+        return localDB.clearAirMasterList();
     }
-
-    return { count: data.length, data };
-}
-
-export async function getMasterListNewFrl() {
-    const latestUploadId = await getLatestUploadId();
-    if (!latestUploadId) return { count: 0, data: [] };
-
-    const { data, error } = await supabase
-        .from('master_list')
-        .select('*')
-        .eq('last_updated_upload_id', latestUploadId)
-        .ilike('last_update_reason', '%FRL%');
-
-    if (error) {
-        console.error('Error getting new FRL items:', error);
-        return { count: 0, data: [] };
-    }
-
-    return { count: data.length, data };
+    return localDB.clearMasterList();
 }
 
 /**
- * COMPARISON OPERATIONS (Between uploads)
+ * UTILITY FUNCTIONS
  */
 
-export async function detectNewItems(currentUploadId) {
-    // Get previous upload
-    const { data: uploads } = await supabase
-        .from('uploads')
-        .select('id')
-        .lt('id', currentUploadId)
-        .order('id', { ascending: false })
-        .limit(1);
+export async function clearAllData(mode = 'ocean') {
+    if (isSupabaseEnabled()) {
+        const tableName = mode === 'air' ? 'air_data' : 'ocean_data';
 
-    if (!uploads || uploads.length === 0) {
-        // No previous upload, all items are new
-        const { count } = await supabase
-            .from('report_data')
-            .select('*', { count: 'exact', head: true })
-            .eq('upload_id', currentUploadId);
-        return count || 0;
+        // Delete all data for this mode
+        await supabase.from(tableName).delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await supabase.from('uploads').delete().eq('mode', mode);
+        return;
     }
 
-    const prevUploadId = uploads[0].id;
-
-    // Get HBs from current upload
-    const { data: currentHBs } = await supabase
-        .from('report_data')
-        .select('hb')
-        .eq('upload_id', currentUploadId)
-        .not('hb', 'is', null)
-        .neq('hb', '');
-
-    // Get HBs from previous upload
-    const { data: prevHBs } = await supabase
-        .from('report_data')
-        .select('hb')
-        .eq('upload_id', prevUploadId)
-        .not('hb', 'is', null)
-        .neq('hb', '');
-
-    const prevHBSet = new Set(prevHBs?.map(r => r.hb) || []);
-    const newItems = currentHBs?.filter(r => !prevHBSet.has(r.hb)) || [];
-
-    return newItems.length;
-}
-
-export async function detectRemovedItems(currentUploadId) {
-    const { data: uploads } = await supabase
-        .from('uploads')
-        .select('id')
-        .lt('id', currentUploadId)
-        .order('id', { ascending: false })
-        .limit(1);
-
-    if (!uploads || uploads.length === 0) return 0;
-
-    const prevUploadId = uploads[0].id;
-
-    const { data: currentHBs } = await supabase
-        .from('report_data')
-        .select('hb')
-        .eq('upload_id', currentUploadId)
-        .not('hb', 'is', null)
-        .neq('hb', '');
-
-    const { data: prevHBs } = await supabase
-        .from('report_data')
-        .select('hb')
-        .eq('upload_id', prevUploadId)
-        .not('hb', 'is', null)
-        .neq('hb', '');
-
-    const currentHBSet = new Set(currentHBs?.map(r => r.hb) || []);
-    const removedItems = prevHBs?.filter(r => !currentHBSet.has(r.hb)) || [];
-
-    return removedItems.length;
-}
-
-export async function getNewItemsData(currentUploadId) {
-    const { data: uploads } = await supabase
-        .from('uploads')
-        .select('id')
-        .lt('id', currentUploadId)
-        .order('id', { ascending: false })
-        .limit(1);
-
-    if (!uploads || uploads.length === 0) {
-        return await getReportData(currentUploadId);
+    // Fallback to localStorage
+    if (mode === 'air') {
+        return localDB.clearAllAirData();
     }
-
-    const prevUploadId = uploads[0].id;
-
-    const { data: prevHBs } = await supabase
-        .from('report_data')
-        .select('hb')
-        .eq('upload_id', prevUploadId)
-        .not('hb', 'is', null)
-        .neq('hb', '');
-
-    const prevHBSet = new Set(prevHBs?.map(r => r.hb) || []);
-
-    const { data: currentData } = await supabase
-        .from('report_data')
-        .select('*')
-        .eq('upload_id', currentUploadId);
-
-    return currentData?.filter(r => r.hb && !prevHBSet.has(r.hb)) || [];
+    return localDB.clearAllData();
 }
 
-export async function getRemovedItemsData(currentUploadId) {
-    const { data: uploads } = await supabase
-        .from('uploads')
-        .select('id')
-        .lt('id', currentUploadId)
-        .order('id', { ascending: false })
-        .limit(1);
+// Check if database is available
+export function isDatabaseAvailable() {
+    return isSupabaseEnabled();
+}
 
-    if (!uploads || uploads.length === 0) return [];
-
-    const prevUploadId = uploads[0].id;
-
-    const { data: currentHBs } = await supabase
-        .from('report_data')
-        .select('hb')
-        .eq('upload_id', currentUploadId)
-        .not('hb', 'is', null)
-        .neq('hb', '');
-
-    const currentHBSet = new Set(currentHBs?.map(r => r.hb) || []);
-
-    const { data: prevData } = await supabase
-        .from('report_data')
-        .select('*')
-        .eq('upload_id', prevUploadId);
-
-    return prevData?.filter(r => r.hb && !currentHBSet.has(r.hb)) || [];
+// Get database type
+export function getDatabaseType() {
+    return isSupabaseEnabled() ? 'supabase' : 'localStorage';
 }
 
 /**
- * DOCK TALLY REPORT OPERATIONS
+ * BACKWARD COMPATIBILITY - Air-specific function wrappers
  */
 
-export async function getDataGroupedByMBL(uploadId = null) {
-    let query = uploadId
-        ? supabase.from('report_data').select('*').eq('upload_id', uploadId)
-        : supabase.from('master_list').select('*');
-
-    const { data, error } = await query;
-
-    if (error) {
-        console.error('Error getting grouped data:', error);
-        return {};
-    }
-
-    // Group by MBL
-    const grouped = {};
-    for (const row of data || []) {
-        const mbl = row.mbl || 'NO MBL';
-        if (!grouped[mbl]) {
-            grouped[mbl] = {
-                mbl: mbl,
-                containers: new Set(),
-                items: [],
-            };
-        }
-        if (row.container) {
-            grouped[mbl].containers.add(row.container);
-        }
-        grouped[mbl].items.push(row);
-    }
-
-    // Convert Sets to arrays
-    for (const mbl in grouped) {
-        grouped[mbl].containers = Array.from(grouped[mbl].containers);
-    }
-
-    return grouped;
+export async function saveAirUpload(filename, rowCount) {
+    return saveUpload(filename, rowCount, 'air');
 }
 
-/**
- * HELPER FUNCTIONS
- */
-
-function normalizeHB(value) {
-    if (value === null || value === undefined || value === '') return '';
-    try {
-        const num = parseFloat(value);
-        if (!isNaN(num)) {
-            return String(Math.floor(num));
-        }
-        return String(value).trim();
-    } catch {
-        return String(value).trim();
-    }
+export async function getAllAirUploads() {
+    return getAllUploads('air');
 }
 
-function hasValueChanged(oldVal, newVal) {
-    const old = (oldVal || '').toString().trim();
-    const now = (newVal || '').toString().trim();
-    // If old was empty and new has value, it changed
-    if (!old && now) return true;
-    // If both had values but different, it changed
-    if (old && now && old !== now) return true;
-    return false;
+export async function deleteAirUpload(uploadId) {
+    return deleteUpload(uploadId, 'air');
 }
+
+export async function saveAirReportData(uploadId, data) {
+    return saveReportData(uploadId, data, 'air');
+}
+
+export async function getAirReportData(uploadId) {
+    return getReportData(uploadId, 'air');
+}
+
+export async function getAllAirReportData() {
+    return getAllReportData('air');
+}
+
+export async function deleteAirReportData(uploadId) {
+    return deleteReportData(uploadId, 'air');
+}
+
+export async function saveAirMasterList(data) {
+    return saveMasterList(data, 'air');
+}
+
+export async function getAirMasterList() {
+    return getMasterList('air');
+}
+
+export async function updateAirMasterList(data) {
+    return updateMasterList(data, 'air');
+}
+
+export async function clearAirMasterList() {
+    return clearMasterList('air');
+}
+
+export async function clearAllAirData() {
+    return clearAllData('air');
+}
+
+// Additional helper functions that Dashboard might need
+export async function getMasterListData(mode = 'ocean') {
+    return getMasterList(mode);
+}
+
+export async function getMasterListMetrics(mode = 'ocean') {
+    const data = await getMasterList(mode);
+    // Calculate metrics from master list
+    return {
+        total: data.length,
+        new: data.filter(item => item.is_new).length,
+        removed: data.filter(item => item.is_removed).length,
+        updated: data.filter(item => item.is_updated).length,
+    };
+}
+
+export async function getMasterListNewItems(mode = 'ocean') {
+    const data = await getMasterList(mode);
+    return data.filter(item => item.is_new);
+}
+
+export async function getAirMasterListData() {
+    return getMasterListData('air');
+}
+
+export async function getAirMasterListMetrics() {
+    return getMasterListMetrics('air');
+}
+
+export async function getAirMasterListNewItems() {
+    return getMasterListNewItems('air');
+}
+
