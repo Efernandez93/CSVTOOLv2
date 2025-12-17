@@ -1,112 +1,152 @@
-# CSV Dock Tally
+# 🌍 Global Dock Tally
 
-A modern web-based dashboard for uploading, viewing, and analyzing ocean carrier CSV reports. Track inventory changes between report versions, identify new items, removed items, and FRL status changes. Generate printable Dock Tally Reports grouped by MBL.
+A modern web application for managing Ocean and Air cargo dock tally reports with real-time data tracking and PDF generation.
 
-## Features
+## ✨ Features
 
-- ✅ **CSV Upload & Storage** - Upload ocean carrier CSV reports with 17 required columns
-- ✅ **Master List** - Consolidated view that tracks all items (never removes)
-- ✅ **Upload History** - Track all uploaded files with timestamps
-- ✅ **Data Comparison** - Detect NEW items, REMOVED items, and newly FRL'd items
-- ✅ **Filtering & Search** - Filter by FRL status, search by any field
-- ✅ **Metrics Dashboard** - Quick stats with clickable metric cards
-- ✅ **CSV Export** - Download filtered views as CSV
-- 🆕 **Dock Tally Reports** - Generate printable reports grouped by MBL
+- **Dual Mode Support**: Ocean and Air cargo management
+- **CSV Upload**: Easy data import with validation
+- **Smart Tracking**: Automatic detection of new, updated, and removed items
+- **PDF Generation**: Professional dock tally reports with customizable layouts
+- **Real-time Metrics**: Live dashboard with filterable data
+- **Data Persistence**: Cloud storage with Supabase (or local fallback)
 
-## Tech Stack
+## 🚀 Quick Start
+
+### Local Development
+
+1. **Clone the repository**
+   ```bash
+   git clone <your-repo-url>
+   cd csv-dock-tally
+   ```
+
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
+
+3. **Run development server**
+   ```bash
+   npm run dev
+   ```
+
+4. **Open in browser**
+   ```
+   http://localhost:5173
+   ```
+
+### With Supabase (Optional)
+
+1. **Create `.env.local` file**
+   ```bash
+   cp .env.example .env.local
+   ```
+
+2. **Add your Supabase credentials**
+   ```env
+   VITE_SUPABASE_URL=https://your-project.supabase.co
+   VITE_SUPABASE_ANON_KEY=your-anon-key
+   ```
+
+3. **Run the schema**
+   - Go to your Supabase SQL Editor
+   - Run the contents of `supabase-schema.sql`
+
+## 📦 Deployment
+
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed deployment instructions to Vercel and Supabase.
+
+### Quick Deploy to Vercel
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/yourusername/csv-dock-tally)
+
+## 🛠️ Tech Stack
 
 - **Frontend**: React + Vite
+- **Styling**: Custom CSS with CSS Variables
 - **Database**: Supabase (PostgreSQL)
-- **Styling**: Modern CSS with glassmorphism and gradients
+- **Hosting**: Vercel
+- **PDF Generation**: html2pdf.js + pdf-lib
 - **Icons**: Lucide React
 
-## Setup
+## 📋 Usage
 
-### 1. Create Supabase Project
+### Ocean Mode
 
-1. Go to [supabase.com](https://supabase.com) and create a new project
-2. Wait for the project to provision (~2 minutes)
-3. Go to **Settings** → **API** and copy:
-   - `Project URL`
-   - `anon/public` key
+1. Click **Ocean** tab
+2. Upload Ocean CSV with columns:
+   - MBL, HB, CONTAINER, DEST, OUTER QTY, PCS
+   - Optional: FRL DATE, TDF DATE, VBOND DATE
+3. View metrics and filtered data
+4. Generate PDF reports
 
-### 2. Set Up Database
+### Air Mode
 
-1. In Supabase, go to **SQL Editor**
-2. Copy the contents of `supabase-schema.sql`
-3. Run the SQL to create all tables and policies
+1. Click **Air** tab
+2. Upload Air CSV with columns:
+   - MAWB, HAWB, FLIGHT NUMBER, DESTINATION
+   - SLAC, QTY, CFS LOCATION, LOG
+3. View metrics and filtered data
+4. Generate PDF reports
 
-### 3. Create Admin User
+## 🔧 Configuration
 
-1. In Supabase, go to **Authentication** → **Users**
-2. Click **Add User** → **Create New User**
-3. Enter:
-   - Email: `admin@yourcompany.com`
-   - Password: `YourSecurePassword`
-4. Click **Create User**
+### Environment Variables
 
-### 4. Configure Environment
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `VITE_SUPABASE_URL` | Your Supabase project URL | No* |
+| `VITE_SUPABASE_ANON_KEY` | Your Supabase anon/public key | No* |
 
-1. Copy `.env.example` to `.env`
-2. Fill in your Supabase credentials:
+*If not provided, app runs in local-only mode with localStorage
 
-```env
-VITE_SUPABASE_URL=https://your-project-id.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key-here
+## 📝 CSV Format
+
+### Ocean CSV
+```csv
+MBL,HB,CONTAINER,DEST,OUTER QTY,PCS,FRL DATE,TDF DATE,VBOND DATE
+ACLU1234,HB001,CONT123,LAX,10,50,1/1/24,1/2/24,1/3/24
 ```
 
-### 5. Install & Run
-
-```bash
-# Install dependencies
-npm install
-
-# Start development server
-npm run dev
+### Air CSV
+```csv
+MAWB,HAWB,FLIGHT NUMBER,DESTINATION,SLAC,QTY,CFS LOCATION,LOG
+016-12345678,4720123456,BR123,ORD,24,5,A1,Entry notes
 ```
 
-Open [http://localhost:5173](http://localhost:5173) in your browser.
+## 🤝 Contributing
 
-## CSV Requirements
+Contributions are welcome! Please feel free to submit a Pull Request.
 
-Your CSV files must contain these 17 columns:
+## 📄 License
 
-| Column | Description |
-|--------|-------------|
-| CONTAINER | Container number |
-| SEAL # | Seal number |
-| CARRIER | Carrier name |
-| MBL | Master Bill of Lading |
-| MI | M/I field |
-| VESSEL | Vessel name |
-| HB | House Bill (unique identifier) |
-| OUTER QUANTITY | Outer quantity |
-| PCS | Pieces count |
-| WT_LBS | Weight in pounds |
-| CNEE | Consignee |
-| FRL | Freight Release date |
-| FILE_NO | File number |
-| DEST | Destination |
-| VOLUME | Volume |
-| VBOND# | V-Bond number |
-| TDF | TDF date |
+MIT License - feel free to use this project for your own purposes.
 
-## Dock Tally Report
+## 🐛 Troubleshooting
 
-The Dock Tally Report feature generates printable reports grouped by MBL:
+### PDF Generation Issues
+- Ensure you've selected items before generating
+- Try refreshing the page if downloads fail
+- Check browser console for errors
 
-1. Click **Dock Report** button
-2. Select which MBLs to include
-3. Preview the report
-4. Click **Print Report** to open print dialog
+### Data Not Persisting
+- Verify Supabase credentials in `.env.local`
+- Check Supabase dashboard for connection issues
+- Ensure database schema is properly set up
 
-Each report shows:
-- MB (Master Bill) number
-- Container(s)
-- List of HBs with Destinations
-- MFST Quantities (Outer Quantity / PCS)
-- Empty columns for manual entry (PCS, LOC, TIME, DMG, CRW)
+### Build Errors
+- Clear `node_modules` and reinstall: `rm -rf node_modules && npm install`
+- Ensure Node.js version is 18 or higher
+- Check for missing environment variables
 
-## License
+## 📞 Support
 
-© 2024 Global CFS, Inc.
+For issues or questions:
+- Check the [DEPLOYMENT.md](./DEPLOYMENT.md) guide
+- Review browser console for errors
+- Verify Supabase connection in dashboard
+
+---
+
+Built with ❤️ for efficient cargo management

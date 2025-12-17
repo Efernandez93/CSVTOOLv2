@@ -1,200 +1,125 @@
--- ============================================
--- CSV Dock Tally - Supabase Database Schema
--- Run this in your Supabase SQL Editor
--- ============================================
+-- Global Dock Tally Database Schema
+-- Run this in Supabase SQL Editor
 
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- ============================================
--- UPLOADS TABLE
--- Stores metadata about each CSV upload
--- ============================================
-CREATE TABLE IF NOT EXISTS uploads (
-    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    upload_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+-- Create uploads table to track CSV uploads
+CREATE TABLE uploads (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    upload_id TEXT UNIQUE NOT NULL,
+    mode TEXT NOT NULL CHECK (mode IN ('ocean', 'air')),
     filename TEXT NOT NULL,
-    row_count INTEGER NOT NULL DEFAULT 0,
+    upload_date TIMESTAMPTZ DEFAULT NOW(),
+    row_count INTEGER NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Index for faster date ordering
-CREATE INDEX IF NOT EXISTS idx_uploads_date ON uploads(upload_date DESC);
-
--- ============================================
--- REPORT_DATA TABLE
--- Stores individual rows from each CSV upload
--- ============================================
-CREATE TABLE IF NOT EXISTS report_data (
-    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    upload_id UUID NOT NULL REFERENCES uploads(id) ON DELETE CASCADE,
-    container TEXT,
-    seal_number TEXT,
-    carrier TEXT,
+-- Create ocean_data table for Ocean cargo
+CREATE TABLE ocean_data (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    upload_id TEXT NOT NULL REFERENCES uploads(upload_id) ON DELETE CASCADE,
     mbl TEXT,
-    mi TEXT,
-    vessel TEXT,
     hb TEXT,
-    outer_quantity TEXT,
-    pcs TEXT,
-    wt_lbs TEXT,
-    cnee TEXT,
-    frl TEXT,
-    file_no TEXT,
-    dest TEXT,
-    volume TEXT,
-    vbond TEXT,
-    tdf TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Indexes for common queries
-CREATE INDEX IF NOT EXISTS idx_report_data_upload ON report_data(upload_id);
-CREATE INDEX IF NOT EXISTS idx_report_data_hb ON report_data(hb);
-CREATE INDEX IF NOT EXISTS idx_report_data_mbl ON report_data(mbl);
-
--- ============================================
--- MASTER_LIST TABLE
--- Consolidated data that tracks all items
--- HB is unique - items are only added/updated
--- ============================================
-CREATE TABLE IF NOT EXISTS master_list (
-    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     container TEXT,
-    seal_number TEXT,
-    carrier TEXT,
-    mbl TEXT,
-    mi TEXT,
-    vessel TEXT,
-    hb TEXT UNIQUE,
+    dest TEXT,
     outer_quantity TEXT,
     pcs TEXT,
-    wt_lbs TEXT,
-    cnee TEXT,
-    frl TEXT,
-    file_no TEXT,
-    dest TEXT,
-    volume TEXT,
-    vbond TEXT,
-    tdf TEXT,
-    first_seen_upload_id UUID REFERENCES uploads(id),
-    last_updated_upload_id UUID REFERENCES uploads(id),
-    last_update_reason TEXT,
+    frl_date TEXT,
+    tdf_date TEXT,
+    vbond_date TEXT,
+    status TEXT DEFAULT 'active',
+    is_new BOOLEAN DEFAULT false,
+    is_removed BOOLEAN DEFAULT false,
+    is_updated BOOLEAN DEFAULT false,
+    last_updated_upload_id TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Indexes for master_list
-CREATE INDEX IF NOT EXISTS idx_master_list_hb ON master_list(hb);
-CREATE INDEX IF NOT EXISTS idx_master_list_mbl ON master_list(mbl);
-CREATE INDEX IF NOT EXISTS idx_master_list_first_seen ON master_list(first_seen_upload_id);
-CREATE INDEX IF NOT EXISTS idx_master_list_last_updated ON master_list(last_updated_upload_id);
-
--- ============================================
--- REMOVED_ITEMS_HISTORY TABLE
--- Tracks items that were removed from uploads
--- ============================================
-CREATE TABLE IF NOT EXISTS removed_items_history (
-    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    hb TEXT,
-    container TEXT,
-    seal_number TEXT,
-    carrier TEXT,
-    mbl TEXT,
-    mi TEXT,
-    vessel TEXT,
-    outer_quantity TEXT,
-    pcs TEXT,
-    wt_lbs TEXT,
-    cnee TEXT,
-    frl TEXT,
-    file_no TEXT,
-    dest TEXT,
-    volume TEXT,
-    vbond TEXT,
-    tdf TEXT,
-    last_seen_upload_id UUID REFERENCES uploads(id),
-    removed_at_upload_id UUID REFERENCES uploads(id),
-    last_seen_date TIMESTAMPTZ,
-    removed_at_date TIMESTAMPTZ DEFAULT NOW()
+-- Create air_data table for Air cargo
+CREATE TABLE air_data (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    upload_id TEXT NOT NULL REFERENCES uploads(upload_id) ON DELETE CASCADE,
+    mawb TEXT,
+    hawb TEXT,
+    flight_number TEXT,
+    destination TEXT,
+    slac TEXT,
+    qty TEXT,
+    cfs_location TEXT,
+    log TEXT,
+    status TEXT DEFAULT 'active',
+    is_new BOOLEAN DEFAULT false,
+    is_removed BOOLEAN DEFAULT false,
+    is_updated BOOLEAN DEFAULT false,
+    last_updated_upload_id TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Index for removed items
-CREATE INDEX IF NOT EXISTS idx_removed_items_hb ON removed_items_history(hb);
+-- Create indexes for better query performance
+CREATE INDEX idx_ocean_upload_id ON ocean_data(upload_id);
+CREATE INDEX idx_ocean_mbl ON ocean_data(mbl);
+CREATE INDEX idx_ocean_hb ON ocean_data(hb);
+CREATE INDEX idx_ocean_status ON ocean_data(status);
 
--- ============================================
--- ROW LEVEL SECURITY (RLS) POLICIES
--- Enable for production security
--- ============================================
+CREATE INDEX idx_air_upload_id ON air_data(upload_id);
+CREATE INDEX idx_air_mawb ON air_data(mawb);
+CREATE INDEX idx_air_hawb ON air_data(hawb);
+CREATE INDEX idx_air_status ON air_data(status);
 
--- Enable RLS on all tables
+CREATE INDEX idx_uploads_mode ON uploads(mode);
+CREATE INDEX idx_uploads_date ON uploads(upload_date DESC);
+
+-- Create updated_at trigger function
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Add triggers to update updated_at automatically
+CREATE TRIGGER update_ocean_data_updated_at
+    BEFORE UPDATE ON ocean_data
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_air_data_updated_at
+    BEFORE UPDATE ON air_data
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Enable Row Level Security (RLS)
 ALTER TABLE uploads ENABLE ROW LEVEL SECURITY;
-ALTER TABLE report_data ENABLE ROW LEVEL SECURITY;
-ALTER TABLE master_list ENABLE ROW LEVEL SECURITY;
-ALTER TABLE removed_items_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ocean_data ENABLE ROW LEVEL SECURITY;
+ALTER TABLE air_data ENABLE ROW LEVEL SECURITY;
 
--- Create policies to allow authenticated users full access
--- (Adjust these policies based on your security requirements)
+-- Create policies to allow public access (adjust based on your auth needs)
+-- For now, we'll allow all operations for development
+CREATE POLICY "Allow all operations on uploads" ON uploads
+    FOR ALL USING (true) WITH CHECK (true);
 
--- Uploads policies
-CREATE POLICY "Allow authenticated users to read uploads" 
-    ON uploads FOR SELECT 
-    TO authenticated 
-    USING (true);
+CREATE POLICY "Allow all operations on ocean_data" ON ocean_data
+    FOR ALL USING (true) WITH CHECK (true);
 
-CREATE POLICY "Allow authenticated users to insert uploads" 
-    ON uploads FOR INSERT 
-    TO authenticated 
-    WITH CHECK (true);
+CREATE POLICY "Allow all operations on air_data" ON air_data
+    FOR ALL USING (true) WITH CHECK (true);
 
-CREATE POLICY "Allow authenticated users to delete uploads" 
-    ON uploads FOR DELETE 
-    TO authenticated 
-    USING (true);
+-- Create a view for latest ocean data
+CREATE OR REPLACE VIEW latest_ocean_data AS
+SELECT DISTINCT ON (hb, mbl)
+    *
+FROM ocean_data
+WHERE status = 'active'
+ORDER BY hb, mbl, created_at DESC;
 
--- Report data policies
-CREATE POLICY "Allow authenticated users to read report_data" 
-    ON report_data FOR SELECT 
-    TO authenticated 
-    USING (true);
-
-CREATE POLICY "Allow authenticated users to insert report_data" 
-    ON report_data FOR INSERT 
-    TO authenticated 
-    WITH CHECK (true);
-
-CREATE POLICY "Allow authenticated users to delete report_data" 
-    ON report_data FOR DELETE 
-    TO authenticated 
-    USING (true);
-
--- Master list policies
-CREATE POLICY "Allow authenticated users to read master_list" 
-    ON master_list FOR SELECT 
-    TO authenticated 
-    USING (true);
-
-CREATE POLICY "Allow authenticated users to insert master_list" 
-    ON master_list FOR INSERT 
-    TO authenticated 
-    WITH CHECK (true);
-
-CREATE POLICY "Allow authenticated users to update master_list" 
-    ON master_list FOR UPDATE 
-    TO authenticated 
-    USING (true);
-
--- Removed items history policies
-CREATE POLICY "Allow authenticated users to read removed_items_history" 
-    ON removed_items_history FOR SELECT 
-    TO authenticated 
-    USING (true);
-
-CREATE POLICY "Allow authenticated users to insert removed_items_history" 
-    ON removed_items_history FOR INSERT 
-    TO authenticated 
-    WITH CHECK (true);
-
--- ============================================
--- DONE! Your database is ready.
--- ============================================
+-- Create a view for latest air data
+CREATE OR REPLACE VIEW latest_air_data AS
+SELECT DISTINCT ON (hawb, mawb)
+    *
+FROM air_data
+WHERE status = 'active'
+ORDER BY hawb, mawb, created_at DESC;
