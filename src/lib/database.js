@@ -33,7 +33,8 @@ export async function saveUpload(filename, rowCount, mode = 'ocean') {
             console.error('Supabase saveUpload error:', error);
             throw error;
         }
-        return { id: data.upload_id, ...data };
+        // Ensure id is set to upload_id (TEXT) not the UUID id from data
+        return { ...data, id: data.upload_id };
     }
 
     // Fallback to localStorage
@@ -56,7 +57,8 @@ export async function getAllUploads(mode = 'ocean') {
             return [];
         }
         console.log('[DEBUG] getAllUploads raw data:', data);
-        const mapped = data.map(u => ({ id: u.upload_id, ...u }));
+        // Ensure id is set to upload_id (TEXT)
+        const mapped = data.map(u => ({ ...u, id: u.upload_id }));
         console.log('[DEBUG] getAllUploads mapped:', mapped);
 
         // Debug: Check total rows in ocean_data table
